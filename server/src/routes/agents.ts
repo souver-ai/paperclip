@@ -519,7 +519,7 @@ export function agentRoutes(
     ]);
 
     return {
-      ...(options?.restricted ? redactForRestrictedAgentView(agent) : agent),
+      ...(options?.restricted ? redactForRestrictedAgentView(agent) : redactAgentForRead(agent)),
       chainOfCommand,
       access: accessState,
     };
@@ -1279,6 +1279,18 @@ export function agentRoutes(
     };
   }
 
+  function redactConfigForRead(value: unknown): Record<string, unknown> {
+    return redactEventPayload(asRecord(value) ?? {}) ?? {};
+  }
+
+  function redactAgentForRead<T extends { adapterConfig?: unknown; runtimeConfig?: unknown }>(agent: T): T {
+    return {
+      ...agent,
+      adapterConfig: redactConfigForRead(agent.adapterConfig),
+      runtimeConfig: redactConfigForRead(agent.runtimeConfig),
+    };
+  }
+
   function redactAgentConfiguration(agent: Awaited<ReturnType<typeof svc.getById>>) {
     if (!agent) return null;
     return {
@@ -1290,8 +1302,8 @@ export function agentRoutes(
       status: agent.status,
       reportsTo: agent.reportsTo,
       adapterType: agent.adapterType,
-      adapterConfig: redactEventPayload(agent.adapterConfig),
-      runtimeConfig: redactEventPayload(agent.runtimeConfig),
+      adapterConfig: redactConfigForRead(agent.adapterConfig),
+      runtimeConfig: redactConfigForRead(agent.runtimeConfig),
       permissions: agent.permissions,
       updatedAt: agent.updatedAt,
     };
@@ -1614,7 +1626,7 @@ export function agentRoutes(
     const result = await svc.list(companyId);
     const canReadConfigs = await actorCanReadConfigurationsForCompany(req, companyId);
     if (canReadConfigs) {
-      res.json(result);
+      res.json(result.map((agent) => redactAgentForRead(agent)));
       return;
     }
     res.json(result.map((agent) => redactForRestrictedAgentView(agent)));
@@ -1884,7 +1896,7 @@ export function agentRoutes(
       details: { revisionId },
     });
 
-    res.json(updated);
+    res.json(redactAgentForRead(updated));
   });
 
   router.get("/agents/:id/runtime-state", async (req, res) => {
@@ -2242,7 +2254,7 @@ export function agentRoutes(
       );
     }
 
-    res.status(201).json(agent);
+    res.status(201).json(redactAgentForRead(agent));
   });
 
   router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {
@@ -2698,7 +2710,7 @@ export function agentRoutes(
       details: summarizeAgentUpdateDetails(patchData),
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.post("/agents/:id/pause", async (req, res) => {
@@ -2724,7 +2736,7 @@ export function agentRoutes(
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.post("/agents/:id/resume", async (req, res) => {
@@ -2748,7 +2760,7 @@ export function agentRoutes(
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.post("/agents/:id/approve", async (req, res) => {
@@ -2783,7 +2795,7 @@ export function agentRoutes(
       details: { source: "agent_detail" },
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.post("/agents/:id/terminate", async (req, res) => {
@@ -2809,7 +2821,7 @@ export function agentRoutes(
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.delete("/agents/:id", async (req, res) => {

@@ -425,6 +425,89 @@ describe.sequential("agent permission routes", () => {
     ]);
   });
 
+  it("redacts sensitive adapter and runtime config values for agent admins", async () => {
+    const agentWithSensitiveConfig = {
+      ...baseAgent,
+      adapterConfig: {
+        cwd: "/tmp/workspace",
+        env: {
+          OPENAI_API_KEY: "sk-test-secret",
+          PUBLIC_FLAG: "enabled",
+        },
+        nested: {
+          accessToken: "token-secret",
+          mode: "fast",
+        },
+      },
+      runtimeConfig: {
+        modelProfiles: {
+          cheap: {
+            adapterConfig: {
+              apiKey: "runtime-secret",
+              model: "qwen-3.6",
+            },
+          },
+        },
+      },
+    };
+    mockAgentService.getById.mockResolvedValue(agentWithSensitiveConfig);
+    mockAgentService.list.mockResolvedValue([agentWithSensitiveConfig]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const detailRes = await requestApp(app, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}`));
+    const listRes = await requestApp(app, (baseUrl) => request(baseUrl).get(`/api/companies/${companyId}/agents`));
+
+    expect(detailRes.status).toBe(200);
+    expect(detailRes.body.adapterConfig.cwd).toBe("/tmp/workspace");
+    expect(detailRes.body.adapterConfig.env.PUBLIC_FLAG).toBe("enabled");
+    expect(detailRes.body.adapterConfig.env.OPENAI_API_KEY).toBe("***REDACTED***");
+    expect(detailRes.body.adapterConfig.nested.accessToken).toBe("***REDACTED***");
+    expect(detailRes.body.adapterConfig.nested.mode).toBe("fast");
+    expect(detailRes.body.runtimeConfig.modelProfiles.cheap.adapterConfig.apiKey).toBe("***REDACTED***");
+    expect(detailRes.body.runtimeConfig.modelProfiles.cheap.adapterConfig.model).toBe("qwen-3.6");
+    expect(listRes.status).toBe(200);
+    expect(listRes.body[0].adapterConfig.env.OPENAI_API_KEY).toBe("***REDACTED***");
+    expect(JSON.stringify(detailRes.body)).not.toContain("sk-test-secret");
+    expect(JSON.stringify(detailRes.body)).not.toContain("token-secret");
+    expect(JSON.stringify(detailRes.body)).not.toContain("runtime-secret");
+    expect(JSON.stringify(listRes.body)).not.toContain("sk-test-secret");
+  });
+
+  it("redacts sensitive adapter config values from the self agent endpoint", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        env: {
+          ANTHROPIC_API_KEY: "anthropic-secret",
+          FEATURE_MODE: "test",
+        },
+      },
+      runtimeConfig: {},
+    });
+
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "api_key",
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl).get("/api/agents/me"));
+
+    expect(res.status).toBe(200);
+    expect(res.body.adapterConfig.env.ANTHROPIC_API_KEY).toBe("***REDACTED***");
+    expect(res.body.adapterConfig.env.FEATURE_MODE).toBe("test");
+    expect(JSON.stringify(res.body)).not.toContain("anthropic-secret");
+  });
+
   it("blocks agent updates for authenticated company members without agent admin permission", async () => {
     mockAccessService.canUser.mockResolvedValue(false);
 
