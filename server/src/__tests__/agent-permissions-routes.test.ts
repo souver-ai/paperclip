@@ -445,6 +445,9 @@ describe.sequential("agent permission routes", () => {
             adapterConfig: {
               apiKey: "runtime-secret",
               model: "qwen-3.6",
+              env: {
+                FEATURE_MODE: "test",
+              },
             },
           },
         },
@@ -466,17 +469,21 @@ describe.sequential("agent permission routes", () => {
 
     expect(detailRes.status).toBe(200);
     expect(detailRes.body.adapterConfig.cwd).toBe("/tmp/workspace");
-    expect(detailRes.body.adapterConfig.env.PUBLIC_FLAG).toBe("enabled");
+    expect(detailRes.body.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.env.OPENAI_API_KEY).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.nested.accessToken).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.nested.mode).toBe("fast");
     expect(detailRes.body.runtimeConfig.modelProfiles.cheap.adapterConfig.apiKey).toBe("***REDACTED***");
     expect(detailRes.body.runtimeConfig.modelProfiles.cheap.adapterConfig.model).toBe("qwen-3.6");
+    expect(detailRes.body.runtimeConfig.modelProfiles.cheap.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
     expect(listRes.status).toBe(200);
     expect(listRes.body[0].adapterConfig.env.OPENAI_API_KEY).toBe("***REDACTED***");
+    expect(listRes.body[0].adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
     expect(JSON.stringify(detailRes.body)).not.toContain("sk-test-secret");
     expect(JSON.stringify(detailRes.body)).not.toContain("token-secret");
     expect(JSON.stringify(detailRes.body)).not.toContain("runtime-secret");
+    expect(JSON.stringify(detailRes.body)).not.toContain("enabled");
+    expect(JSON.stringify(detailRes.body)).not.toContain("FEATURE_MODE\":\"test");
     expect(JSON.stringify(listRes.body)).not.toContain("sk-test-secret");
   });
 
@@ -504,8 +511,9 @@ describe.sequential("agent permission routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.adapterConfig.env.ANTHROPIC_API_KEY).toBe("***REDACTED***");
-    expect(res.body.adapterConfig.env.FEATURE_MODE).toBe("test");
+    expect(res.body.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
     expect(JSON.stringify(res.body)).not.toContain("anthropic-secret");
+    expect(JSON.stringify(res.body)).not.toContain("FEATURE_MODE\":\"test");
   });
 
   it("blocks agent updates for authenticated company members without agent admin permission", async () => {
@@ -666,6 +674,51 @@ describe.sequential("agent permission routes", () => {
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       action: "agent.updated",
     }));
+  });
+
+  it("redacts adapter env values from agent update responses", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        model: "gpt-test",
+        env: {
+          PUBLIC_FLAG: "enabled",
+        },
+      },
+    });
+    mockAgentService.update.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        model: "gpt-test",
+        env: {
+          PUBLIC_FLAG: "enabled",
+        },
+      },
+    });
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}`)
+      .send({
+        adapterConfig: {
+          model: "gpt-test",
+          env: {
+            PUBLIC_FLAG: "enabled",
+          },
+        },
+      }));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.adapterConfig.model).toBe("gpt-test");
+    expect(res.body.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(JSON.stringify(res.body)).not.toContain("enabled");
   });
 
   it("normalizes cheap-profile env bindings through the adapter config secret pipeline", async () => {
@@ -844,6 +897,15 @@ describe.sequential("agent permission routes", () => {
 
   it("allows direct agent creation for authenticated board users with agent create permission when approval is not required", async () => {
     mockAccessService.canUser.mockResolvedValue(true);
+    mockAgentService.create.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        model: "gpt-test",
+        env: {
+          PUBLIC_FLAG: "enabled",
+        },
+      },
+    });
 
     const app = await createApp({
       type: "board",
@@ -859,10 +921,18 @@ describe.sequential("agent permission routes", () => {
         name: "Builder",
         role: "engineer",
         adapterType: "process",
-        adapterConfig: {},
+        adapterConfig: {
+          model: "gpt-test",
+          env: {
+            PUBLIC_FLAG: "enabled",
+          },
+        },
       }));
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.adapterConfig.model).toBe("gpt-test");
+    expect(res.body.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(JSON.stringify(res.body)).not.toContain("enabled");
     expect(mockAgentService.create).toHaveBeenCalledWith(
       companyId,
       expect.objectContaining({
