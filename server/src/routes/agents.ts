@@ -73,7 +73,7 @@ import {
   refreshAdapterModels,
   requireServerAdapter,
 } from "../adapters/index.js";
-import { redactEventPayload } from "../redaction.js";
+import { REDACTED_EVENT_VALUE, redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
@@ -1279,8 +1279,44 @@ export function agentRoutes(
     };
   }
 
+  function isSecretRefBinding(value: unknown): value is { type: "secret_ref"; secretId: string; version?: unknown } {
+    return Boolean(
+      value
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && (value as Record<string, unknown>).type === "secret_ref"
+      && typeof (value as Record<string, unknown>).secretId === "string",
+    );
+  }
+
+  function redactEnvBindings(value: unknown): unknown {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return REDACTED_EVENT_VALUE;
+
+    const redacted: Record<string, unknown> = {};
+    for (const [key, binding] of Object.entries(value as Record<string, unknown>)) {
+      redacted[key] = isSecretRefBinding(binding) ? binding : REDACTED_EVENT_VALUE;
+    }
+    return redacted;
+  }
+
+  function redactConfigValueForRead(value: unknown, key?: string): unknown {
+    if (key && key.toLowerCase() === "env") return redactEnvBindings(value);
+    if (Array.isArray(value)) return value.map((entry) => redactConfigValueForRead(entry));
+    if (!value || typeof value !== "object") return value;
+
+    const eventRedacted = redactEventPayload(value as Record<string, unknown>) ?? {};
+    const redacted: Record<string, unknown> = {};
+    for (const [entryKey, entryValue] of Object.entries(eventRedacted)) {
+      redacted[entryKey] = redactConfigValueForRead(entryValue, entryKey);
+    }
+    return redacted;
+  }
+
   function redactConfigForRead(value: unknown): Record<string, unknown> {
-    return redactEventPayload(asRecord(value) ?? {}) ?? {};
+    const redacted = redactConfigValueForRead(value);
+    return redacted && typeof redacted === "object" && !Array.isArray(redacted)
+      ? redacted as Record<string, unknown>
+      : {};
   }
 
   function redactAgentForRead<T extends { adapterConfig?: unknown; runtimeConfig?: unknown }>(agent: T): T {
