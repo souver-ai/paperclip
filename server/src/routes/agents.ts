@@ -73,7 +73,7 @@ import {
   refreshAdapterModels,
   requireServerAdapter,
 } from "../adapters/index.js";
-import { REDACTED_EVENT_VALUE, redactEventPayload } from "../redaction.js";
+import { redactConfigForRead, redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
@@ -1279,46 +1279,6 @@ export function agentRoutes(
     };
   }
 
-  function isSecretRefBinding(value: unknown): value is { type: "secret_ref"; secretId: string; version?: unknown } {
-    return Boolean(
-      value
-      && typeof value === "object"
-      && !Array.isArray(value)
-      && (value as Record<string, unknown>).type === "secret_ref"
-      && typeof (value as Record<string, unknown>).secretId === "string",
-    );
-  }
-
-  function redactEnvBindings(value: unknown): unknown {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return REDACTED_EVENT_VALUE;
-
-    const redacted: Record<string, unknown> = {};
-    for (const [key, binding] of Object.entries(value as Record<string, unknown>)) {
-      redacted[key] = isSecretRefBinding(binding) ? binding : REDACTED_EVENT_VALUE;
-    }
-    return redacted;
-  }
-
-  function redactConfigValueForRead(value: unknown, key?: string): unknown {
-    if (key && key.toLowerCase() === "env") return redactEnvBindings(value);
-    if (Array.isArray(value)) return value.map((entry) => redactConfigValueForRead(entry));
-    if (!value || typeof value !== "object") return value;
-
-    const eventRedacted = redactEventPayload(value as Record<string, unknown>) ?? {};
-    const redacted: Record<string, unknown> = {};
-    for (const [entryKey, entryValue] of Object.entries(eventRedacted)) {
-      redacted[entryKey] = redactConfigValueForRead(entryValue, entryKey);
-    }
-    return redacted;
-  }
-
-  function redactConfigForRead(value: unknown): Record<string, unknown> {
-    const redacted = redactConfigValueForRead(value);
-    return redacted && typeof redacted === "object" && !Array.isArray(redacted)
-      ? redacted as Record<string, unknown>
-      : {};
-  }
-
   function redactAgentForRead<T extends { adapterConfig?: unknown; runtimeConfig?: unknown }>(agent: T): T {
     return {
       ...agent,
@@ -1350,16 +1310,8 @@ export function agentRoutes(
     const record = snapshot as Record<string, unknown>;
     return {
       ...record,
-      adapterConfig: redactEventPayload(
-        typeof record.adapterConfig === "object" && record.adapterConfig !== null
-          ? (record.adapterConfig as Record<string, unknown>)
-          : {},
-      ),
-      runtimeConfig: redactEventPayload(
-        typeof record.runtimeConfig === "object" && record.runtimeConfig !== null
-          ? (record.runtimeConfig as Record<string, unknown>)
-          : {},
-      ),
+      adapterConfig: redactConfigForRead(record.adapterConfig),
+      runtimeConfig: redactConfigForRead(record.runtimeConfig),
       metadata:
         typeof record.metadata === "object" && record.metadata !== null
           ? redactEventPayload(record.metadata as Record<string, unknown>)
@@ -2072,13 +2024,9 @@ export function agentRoutes(
     if (requiresApproval) {
       const requestedAdapterType = normalizedHireInput.adapterType ?? agent.adapterType;
       const requestedAdapterConfig =
-        redactEventPayload(
-          (agent.adapterConfig ?? normalizedHireInput.adapterConfig) as Record<string, unknown>,
-        ) ?? {};
+        redactConfigForRead(agent.adapterConfig ?? normalizedHireInput.adapterConfig);
       const requestedRuntimeConfig =
-        redactEventPayload(
-          (normalizedHireInput.runtimeConfig ?? agent.runtimeConfig) as Record<string, unknown>,
-        ) ?? {};
+        redactConfigForRead(normalizedHireInput.runtimeConfig ?? agent.runtimeConfig);
       const requestedMetadata =
         redactEventPayload(
           ((normalizedHireInput.metadata ?? agent.metadata ?? {}) as Record<string, unknown>),
@@ -2170,7 +2118,7 @@ export function agentRoutes(
       });
     }
 
-    res.status(201).json({ agent, approval });
+    res.status(201).json({ agent: redactAgentForRead(agent), approval });
   });
 
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
