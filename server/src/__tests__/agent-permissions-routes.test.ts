@@ -769,7 +769,7 @@ describe.sequential("agent permission routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   }, 15_000);
 
-  it("blocks agent-authenticated instructions-path updates", async () => {
+  it("allows agent-authenticated self instructions-path updates through the dedicated route", async () => {
     const app = await createApp({
       type: "agent",
       agentId,
@@ -777,13 +777,117 @@ describe.sequential("agent permission routes", () => {
       source: "agent_key",
       runId: "run-1",
     });
+    mockAgentService.update.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+      },
+    });
 
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
       .patch(`/api/agents/${agentId}/instructions-path`)
-      .send({ path: "/etc/passwd" }));
+      .send({ path: "/tmp/agents/builder/AGENTS.md", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      agentId,
+      {
+        adapterConfig: {
+          instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+        },
+      },
+      expect.objectContaining({
+        recordRevision: expect.objectContaining({
+          createdByAgentId: agentId,
+          createdByUserId: null,
+          source: "instructions_path_patch",
+        }),
+      }),
+    );
+    expect(res.body).toEqual({
+      agentId,
+      adapterType: "process",
+      adapterConfigKey: "instructionsFilePath",
+      path: "/tmp/agents/builder/AGENTS.md",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: "agent",
+        actorId: agentId,
+        agentId,
+        runId: "run-1",
+        action: "agent.instructions_path_updated",
+      }),
+    );
+  });
+
+  it("allows ancestor managers to update a report's instructions path through the dedicated route", async () => {
+    const managerId = "33333333-3333-4333-8333-333333333333";
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      reportsTo: managerId,
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerId, name: "CTO", role: "cto", title: "CTO" },
+    ]);
+    mockAgentService.update.mockResolvedValue({
+      ...baseAgent,
+      reportsTo: managerId,
+      adapterConfig: {
+        instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+      },
+    });
+    const app = await createApp({
+      type: "agent",
+      agentId: managerId,
+      companyId,
+      source: "agent_key",
+      runId: "run-manager",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/tmp/agents/builder/AGENTS.md", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      agentId,
+      {
+        adapterConfig: {
+          instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+        },
+      },
+      expect.objectContaining({
+        recordRevision: expect.objectContaining({
+          createdByAgentId: managerId,
+          createdByUserId: null,
+          source: "instructions_path_patch",
+        }),
+      }),
+    );
+  });
+
+  it("blocks unrelated agent-authenticated instructions-path updates", async () => {
+    const otherAgentId = "44444444-4444-4444-8444-444444444444";
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: "33333333-3333-4333-8333-333333333333", name: "CTO", role: "cto", title: "CTO" },
+    ]);
+    const app = await createApp({
+      type: "agent",
+      agentId: otherAgentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/tmp/agents/builder/AGENTS.md", adapterConfigKey: "instructionsFilePath" }));
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toContain("instructions path or bundle configuration");
+    expect(res.body.error).toContain("ancestor manager");
+    expect(mockAgentService.update).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
