@@ -1136,12 +1136,19 @@ export function agentRoutes(
 
   async function assertCanManageInstructionsPath(req: Request, targetAgent: { id: string; companyId: string }) {
     assertCompanyAccess(req, targetAgent.companyId);
-    if (req.actor.type !== "board") {
-      throw forbidden(
-        "Only board-authenticated callers can manage instructions path or bundle configuration",
-      );
+    if (req.actor.type === "board") {
+      await assertBoardCanManageAgentsForCompany(req, targetAgent.companyId);
+      return;
     }
-    await assertBoardCanManageAgentsForCompany(req, targetAgent.companyId);
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+    if (req.actor.agentId === targetAgent.id) return;
+
+    const chainOfCommand = await svc.getChainOfCommand(targetAgent.id);
+    if (chainOfCommand.some((manager) => manager.id === req.actor.agentId)) return;
+
+    throw forbidden(
+      "Only the target agent, an ancestor manager, or a board-authenticated caller can manage instructions path or bundle configuration",
+    );
   }
 
   function assertNoAgentInstructionsConfigMutation(
@@ -2318,10 +2325,6 @@ export function agentRoutes(
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {
-    if (req.actor.type !== "board") {
-      throw forbidden("Only board-authenticated callers can manage instructions path or bundle configuration");
-    }
-
     const id = req.params.id as string;
     const existing = await svc.getById(id);
     if (!existing) {
