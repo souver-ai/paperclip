@@ -1179,6 +1179,107 @@ describe.sequential("agent permission routes", () => {
     );
   });
 
+  it("redacts adapter env values from approval-required hire responses and approval snapshots", async () => {
+    mockAgentService.create.mockResolvedValue({
+      ...baseAgent,
+      status: "pending_approval",
+      adapterConfig: {
+        model: "gpt-test",
+        env: {
+          PUBLIC_FLAG: "enabled",
+        },
+      },
+      runtimeConfig: {
+        modelProfiles: {
+          cheap: {
+            adapterConfig: {
+              model: "qwen-3.6",
+              env: {
+                FEATURE_MODE: "test",
+              },
+            },
+          },
+        },
+      },
+    });
+    mockApprovalService.create.mockImplementation(async (_companyId, input) => ({
+      id: "approval-1",
+      ...input,
+    }));
+
+    const app = await createApp(
+      {
+        type: "board",
+        userId: "board-user",
+        source: "local_implicit",
+        isInstanceAdmin: true,
+        companyIds: [companyId],
+      },
+      { requireBoardApprovalForNewAgents: true },
+    );
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .post(`/api/companies/${companyId}/agent-hires`)
+      .send({
+        name: "Builder",
+        role: "engineer",
+        adapterType: "process",
+        adapterConfig: {
+          model: "gpt-test",
+          env: {
+            PUBLIC_FLAG: "enabled",
+          },
+        },
+        runtimeConfig: {
+          modelProfiles: {
+            cheap: {
+              adapterConfig: {
+                model: "qwen-3.6",
+                env: {
+                  FEATURE_MODE: "test",
+                },
+              },
+            },
+          },
+        },
+      }));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.agent.adapterConfig.model).toBe("gpt-test");
+    expect(res.body.agent.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(res.body.agent.runtimeConfig.modelProfiles.cheap.adapterConfig.model).toBe("qwen-3.6");
+    expect(res.body.agent.runtimeConfig.modelProfiles.cheap.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
+    expect(res.body.approval.payload.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(res.body.approval.payload.runtimeConfig.modelProfiles.cheap.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
+    expect(res.body.approval.payload.requestedConfigurationSnapshot.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(res.body.approval.payload.requestedConfigurationSnapshot.runtimeConfig.modelProfiles.cheap.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
+    expect(JSON.stringify(res.body)).not.toContain("\"PUBLIC_FLAG\":\"enabled\"");
+    expect(JSON.stringify(res.body)).not.toContain("\"FEATURE_MODE\":\"test\"");
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      companyId,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          adapterConfig: expect.objectContaining({
+            env: {
+              PUBLIC_FLAG: "***REDACTED***",
+            },
+          }),
+          runtimeConfig: expect.objectContaining({
+            modelProfiles: expect.objectContaining({
+              cheap: expect.objectContaining({
+                adapterConfig: expect.objectContaining({
+                  env: {
+                    FEATURE_MODE: "***REDACTED***",
+                  },
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
   it("allows board users to directly approve pending agents", async () => {
     const pendingAgent = {
       ...baseAgent,
