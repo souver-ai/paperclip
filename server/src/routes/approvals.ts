@@ -17,13 +17,13 @@ import {
   secretService,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { redactEventPayload } from "../redaction.js";
+import { redactConfigFieldsForRead } from "../redaction.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
     ...approval,
-    payload: redactEventPayload(approval.payload) ?? {},
+    payload: redactConfigFieldsForRead(approval.payload) ?? {},
   };
 }
 
