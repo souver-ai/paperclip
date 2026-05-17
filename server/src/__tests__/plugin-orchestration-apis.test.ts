@@ -33,6 +33,7 @@ function createEventBusStub() {
       return {
         emit: async () => {},
         subscribe: () => {},
+        clear: () => {},
       };
     },
   } as any;
@@ -106,6 +107,87 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     tempRoots.push(root);
     return root;
   }
+
+  it("redacts agent adapter secrets from plugin host metadata reads", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    await db
+      .update(agents)
+      .set({
+        adapterConfig: {
+          model: "qwen-3.6",
+          env: {
+            OPENAI_API_KEY: "plugin-host-secret",
+            FEATURE_MODE: "debug",
+          },
+          nested: {
+            accessToken: "nested-token-secret",
+            region: "eu-west",
+          },
+        },
+        runtimeConfig: {
+          heartbeat: { enabled: true, intervalSec: 300 },
+          modelProfiles: {
+            cheap: {
+              enabled: true,
+              adapterConfig: {
+                model: "small",
+                env: {
+                  ROUTINE_TOKEN: "routine-token-secret",
+                },
+              },
+            },
+          },
+        },
+        metadata: {
+          routingTier: "core",
+          webhookSecret: "metadata-secret",
+        },
+      })
+      .where(eq(agents.id, agentId));
+
+    const services = buildHostServices(db, "plugin-record-id", "paperclip.missions", createEventBusStub());
+
+    const listed = await services.agents.list({ companyId });
+    const detail = await services.agents.get({ companyId, agentId });
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.adapterConfig).toMatchObject({
+      model: "qwen-3.6",
+      env: {
+        OPENAI_API_KEY: "***REDACTED***",
+        FEATURE_MODE: "***REDACTED***",
+      },
+      nested: {
+        accessToken: "***REDACTED***",
+        region: "eu-west",
+      },
+    });
+    expect(detail?.runtimeConfig).toMatchObject({
+      heartbeat: { enabled: true, intervalSec: 300 },
+      modelProfiles: {
+        cheap: {
+          enabled: true,
+          adapterConfig: {
+            model: "small",
+            env: {
+              ROUTINE_TOKEN: "***REDACTED***",
+            },
+          },
+        },
+      },
+    });
+    expect(detail?.metadata).toMatchObject({
+      routingTier: "core",
+      webhookSecret: "***REDACTED***",
+    });
+    expect(JSON.stringify(listed)).not.toContain("plugin-host-secret");
+    expect(JSON.stringify(listed)).not.toContain("debug");
+    expect(JSON.stringify(listed)).not.toContain("nested-token-secret");
+    expect(JSON.stringify(detail)).not.toContain("routine-token-secret");
+    expect(JSON.stringify(detail)).not.toContain("metadata-secret");
+
+    services.dispose();
+  });
 
   it("creates plugin-origin issues with full orchestration fields and audit activity", async () => {
     const { companyId, agentId } = await seedCompanyAndAgent();

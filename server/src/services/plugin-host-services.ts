@@ -69,6 +69,7 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { logger } from "../middleware/logger.js";
 import { getTelemetryClient } from "../telemetry.js";
+import { redactConfigForRead, redactEventPayload } from "../redaction.js";
 
 // ---------------------------------------------------------------------------
 // SSRF protection for plugin HTTP fetch
@@ -83,6 +84,18 @@ const DNS_LOOKUP_TIMEOUT_MS = 5_000;
 /** Only these protocols are allowed for plugin HTTP requests. */
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 const TELEMETRY_EVENT_NAME_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
+
+function redactAgentForPluginRead(agent: Agent): Agent {
+  return {
+    ...agent,
+    adapterConfig: redactConfigForRead(agent.adapterConfig),
+    runtimeConfig: redactConfigForRead(agent.runtimeConfig),
+    metadata:
+      agent.metadata && typeof agent.metadata === "object" && !Array.isArray(agent.metadata)
+        ? redactEventPayload(agent.metadata) ?? null
+        : agent.metadata ?? null,
+  };
+}
 
 /**
  * Check if an IP address is in a private/reserved range (RFC 1918, loopback,
@@ -1844,7 +1857,9 @@ export function buildHostServices(
         await ensurePluginAvailableForCompany(companyId);
         const rows = await agents.list(companyId);
         return applyWindow(
-          rows.filter((agent) => !params.status || agent.status === params.status) as Agent[],
+          rows
+            .filter((agent) => !params.status || agent.status === params.status)
+            .map((agent) => redactAgentForPluginRead(agent as Agent)),
           params,
         );
       },
@@ -1852,7 +1867,7 @@ export function buildHostServices(
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
         const agent = await agents.getById(params.agentId);
-        return (inCompany(agent, companyId) ? agent : null) as Agent | null;
+        return inCompany(agent, companyId) ? redactAgentForPluginRead(agent as Agent) : null;
       },
       async pause(params) {
         const companyId = ensureCompanyId(params.companyId);
