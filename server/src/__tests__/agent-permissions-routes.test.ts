@@ -787,6 +787,119 @@ describe.sequential("agent permission routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
+  it("allows security agents to verify only the instructions path", async () => {
+    const targetAgent = {
+      ...baseAgent,
+      adapterType: "codex_local",
+      adapterConfig: {
+        instructionsFilePath: "/tmp/agent/AGENTS.md",
+        env: {
+          OPENAI_API_KEY: "sk-test-secret",
+        },
+      },
+    };
+    const securityAgent = {
+      ...baseAgent,
+      id: "33333333-3333-4333-8333-333333333333",
+      role: "security",
+      adapterConfig: {},
+    };
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === securityAgent.id) return securityAgent;
+      return targetAgent;
+    });
+
+    const app = await createApp({
+      type: "agent",
+      agentId: securityAgent.id,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .get(`/api/agents/${agentId}/instructions-path`));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      agentId,
+      adapterType: "codex_local",
+      adapterConfigKey: "instructionsFilePath",
+      path: "/tmp/agent/AGENTS.md",
+      configured: true,
+    });
+    expect(JSON.stringify(res.body)).not.toContain("sk-test-secret");
+  });
+
+  it("allows manager-chain agents to verify a report's instructions path", async () => {
+    const managerAgent = {
+      ...baseAgent,
+      id: "33333333-3333-4333-8333-333333333333",
+      role: "cto",
+      adapterConfig: {},
+    };
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === managerAgent.id) return managerAgent;
+      return {
+        ...baseAgent,
+        adapterType: "claude_local",
+        adapterConfig: {
+          instructionsFilePath: "/tmp/report/AGENTS.md",
+        },
+      };
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerAgent.id, name: "CTO", role: "cto", title: "CTO" },
+    ]);
+
+    const app = await createApp({
+      type: "agent",
+      agentId: managerAgent.id,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .get(`/api/agents/${agentId}/instructions-path`));
+
+    expect(res.status).toBe(200);
+    expect(res.body.path).toBe("/tmp/report/AGENTS.md");
+  });
+
+  it("blocks unrelated agents from verifying instructions paths", async () => {
+    const unrelatedAgent = {
+      ...baseAgent,
+      id: "33333333-3333-4333-8333-333333333333",
+      adapterConfig: {},
+    };
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === unrelatedAgent.id) return unrelatedAgent;
+      return {
+        ...baseAgent,
+        adapterType: "codex_local",
+        adapterConfig: {
+          instructionsFilePath: "/tmp/agent/AGENTS.md",
+        },
+      };
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([]);
+
+    const app = await createApp({
+      type: "agent",
+      agentId: unrelatedAgent.id,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .get(`/api/agents/${agentId}/instructions-path`));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("Missing permission to verify agent instructions path");
+  });
+
   it("blocks agent-authenticated hires that set instructions bundle config", async () => {
     mockAccessService.hasPermission.mockResolvedValue(true);
 
