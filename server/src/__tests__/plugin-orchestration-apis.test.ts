@@ -149,6 +149,8 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
 
     const listed = await services.agents.list({ companyId });
     const detail = await services.agents.get({ companyId, agentId });
+    const paused = await services.agents.pause({ companyId, agentId });
+    const resumed = await services.agents.resume({ companyId, agentId });
 
     expect(listed).toHaveLength(1);
     expect(listed[0]?.adapterConfig).toMatchObject({
@@ -180,11 +182,39 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
       routingTier: "core",
       webhookSecret: "***REDACTED***",
     });
+    expect(paused?.status).toBe("paused");
+    expect(paused?.adapterConfig).toMatchObject({
+      model: "qwen-3.6",
+      env: {
+        OPENAI_API_KEY: "***REDACTED***",
+        FEATURE_MODE: "***REDACTED***",
+      },
+    });
+    expect(resumed?.status).toBe("idle");
+    expect(resumed?.runtimeConfig).toMatchObject({
+      heartbeat: { enabled: true, intervalSec: 300 },
+      modelProfiles: {
+        cheap: {
+          enabled: true,
+          adapterConfig: {
+            model: "small",
+            env: {
+              ROUTINE_TOKEN: "***REDACTED***",
+            },
+          },
+        },
+      },
+    });
     expect(JSON.stringify(listed)).not.toContain("plugin-host-secret");
     expect(JSON.stringify(listed)).not.toContain("debug");
     expect(JSON.stringify(listed)).not.toContain("nested-token-secret");
     expect(JSON.stringify(detail)).not.toContain("routine-token-secret");
     expect(JSON.stringify(detail)).not.toContain("metadata-secret");
+    expect(JSON.stringify(paused)).not.toContain("plugin-host-secret");
+    expect(JSON.stringify(paused)).not.toContain("debug");
+    expect(JSON.stringify(paused)).not.toContain("nested-token-secret");
+    expect(JSON.stringify(resumed)).not.toContain("routine-token-secret");
+    expect(JSON.stringify(resumed)).not.toContain("metadata-secret");
 
     services.dispose();
   });

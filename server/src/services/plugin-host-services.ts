@@ -1874,14 +1874,18 @@ export function buildHostServices(
         await ensurePluginAvailableForCompany(companyId);
         const agent = await agents.getById(params.agentId);
         requireInCompany("Agent", agent, companyId);
-        return (await agents.pause(params.agentId)) as Agent;
+        const paused = await agents.pause(params.agentId);
+        if (!paused) throw new Error("Agent not found");
+        return redactAgentForPluginRead(paused as Agent);
       },
       async resume(params) {
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
         const agent = await agents.getById(params.agentId);
         requireInCompany("Agent", agent, companyId);
-        return (await agents.resume(params.agentId)) as Agent;
+        const resumed = await agents.resume(params.agentId);
+        if (!resumed) throw new Error("Agent not found");
+        return redactAgentForPluginRead(resumed as Agent);
       },
       async invoke(params) {
         const companyId = ensureCompanyId(params.companyId);
