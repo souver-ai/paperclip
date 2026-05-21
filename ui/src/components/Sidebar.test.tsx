@@ -15,6 +15,10 @@ const mockInstanceSettingsApi = vi.hoisted(() => ({
   getExperimental: vi.fn(),
 }));
 
+const mockInboxBadge = vi.hoisted(() => ({
+  value: { inbox: 0, approvals: 0, failedRuns: 0 },
+}));
+
 vi.mock("@/lib/router", () => ({
   NavLink: ({ to, children, className, ...props }: {
     to: string;
@@ -22,7 +26,7 @@ vi.mock("@/lib/router", () => ({
     className?: string | ((state: { isActive: boolean }) => string);
   }) => (
     <a
-      href={to}
+      href={to.startsWith("/") ? `/SOU${to}` : to}
       className={typeof className === "function" ? className({ isActive: false }) : className}
       {...props}
     >
@@ -43,7 +47,7 @@ vi.mock("../context/DialogContext", () => ({
 vi.mock("../context/CompanyContext", () => ({
   useCompany: () => ({
     selectedCompanyId: "company-1",
-    selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Paperclip" },
+    selectedCompany: { id: "company-1", issuePrefix: "SOU", name: "Souver" },
   }),
 }));
 
@@ -63,7 +67,7 @@ vi.mock("../api/instanceSettings", () => ({
 }));
 
 vi.mock("../hooks/useInboxBadge", () => ({
-  useInboxBadge: () => ({ inbox: 0, failedRuns: 0 }),
+  useInboxBadge: () => mockInboxBadge.value,
 }));
 
 vi.mock("@/plugins/slots", () => ({
@@ -117,6 +121,7 @@ describe("Sidebar", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
+    mockInboxBadge.value = { inbox: 0, approvals: 0, failedRuns: 0 };
   });
 
   afterEach(() => {
@@ -130,7 +135,7 @@ describe("Sidebar", () => {
     const root = await renderSidebar();
 
     const topSearchLink = container.querySelector('a[aria-label="Search"]');
-    expect(topSearchLink?.getAttribute("href")).toBe("/search");
+    expect(topSearchLink?.getAttribute("href")).toBe("/SOU/search");
     const workLinks = [...container.querySelectorAll("nav a")].map((anchor) => anchor.textContent?.trim());
     expect(workLinks).not.toContain("Search");
 
@@ -155,7 +160,21 @@ describe("Sidebar", () => {
     const root = await renderSidebar();
 
     const link = [...container.querySelectorAll("a")].find((anchor) => anchor.textContent === "Workspaces");
-    expect(link?.getAttribute("href")).toBe("/workspaces");
+    expect(link?.getAttribute("href")).toBe("/SOU/workspaces");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("links Approvals directly to the company-prefixed pending approvals page with its own badge", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    mockInboxBadge.value = { inbox: 5, approvals: 2, failedRuns: 0 };
+    const root = await renderSidebar();
+
+    const link = [...container.querySelectorAll("a")].find((anchor) => anchor.textContent?.includes("Approvals"));
+    expect(link?.getAttribute("href")).toBe("/SOU/approvals/pending");
+    expect(link?.textContent).toContain("2");
 
     await act(async () => {
       root.unmount();

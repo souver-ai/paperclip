@@ -289,7 +289,7 @@ describe("approval routes idempotent retries", () => {
   });
 
   it("lets agents create generic issue-linked board approval requests", async () => {
-    mockApprovalService.create.mockResolvedValue({
+    const createdApproval = {
       id: "approval-1",
       companyId: "company-1",
       type: "request_board_approval",
@@ -302,9 +302,14 @@ describe("approval routes idempotent retries", () => {
       decidedAt: null,
       createdAt: new Date("2026-04-06T00:00:00.000Z"),
       updatedAt: new Date("2026-04-06T00:00:00.000Z"),
+    };
+    mockApprovalService.create.mockResolvedValue({
+      ...createdApproval,
     });
+    mockApprovalService.list.mockResolvedValue([createdApproval]);
 
-    const res = await request(await createAgentApp())
+    const app = await createAgentApp();
+    const res = await request(app)
       .post("/api/companies/company-1/approvals")
       .send({
         type: "request_board_approval",
@@ -335,5 +340,19 @@ describe("approval routes idempotent retries", () => {
         action: "approval.created",
       }),
     );
+
+    const listRes = await request(app).get("/api/companies/company-1/approvals?status=pending");
+
+    expect(listRes.status).toBe(200);
+    expect(mockApprovalService.list).toHaveBeenCalledWith("company-1", "pending");
+    expect(listRes.body).toMatchObject([
+      {
+        id: "approval-1",
+        companyId: "company-1",
+        type: "request_board_approval",
+        requestedByAgentId: "agent-1",
+        status: "pending",
+      },
+    ]);
   });
 });
