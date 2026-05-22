@@ -7,6 +7,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 
+let mockPathname = "/dashboard";
+let mockInboxBadge = { inbox: 0, approvals: 0, failedRuns: 0, joinRequests: 0, mineIssues: 0, alerts: 0 };
+
 const mockHeartbeatsApi = vi.hoisted(() => ({
   liveRunsForCompany: vi.fn(),
 }));
@@ -16,6 +19,7 @@ const mockInstanceSettingsApi = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/router", () => ({
+  useLocation: () => ({ pathname: mockPathname }),
   NavLink: ({ to, children, className, ...props }: {
     to: string;
     children: ReactNode;
@@ -63,7 +67,7 @@ vi.mock("../api/instanceSettings", () => ({
 }));
 
 vi.mock("../hooks/useInboxBadge", () => ({
-  useInboxBadge: () => ({ inbox: 0, failedRuns: 0 }),
+  useInboxBadge: () => mockInboxBadge,
 }));
 
 vi.mock("@/plugins/slots", () => ({
@@ -116,6 +120,8 @@ describe("Sidebar", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
+    mockPathname = "/dashboard";
+    mockInboxBadge = { inbox: 0, approvals: 0, failedRuns: 0, joinRequests: 0, mineIssues: 0, alerts: 0 };
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
   });
 
@@ -156,6 +162,20 @@ describe("Sidebar", () => {
 
     const link = [...container.querySelectorAll("a")].find((anchor) => anchor.textContent === "Workspaces");
     expect(link?.getAttribute("href")).toBe("/workspaces");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("shows the Approvals link with the actionable approvals badge", async () => {
+    mockInboxBadge = { inbox: 3, approvals: 3, failedRuns: 0, joinRequests: 0, mineIssues: 0, alerts: 0 };
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    const root = await renderSidebar();
+
+    const approvalsLink = [...container.querySelectorAll("a")].find((anchor) => anchor.textContent?.includes("Approvals"));
+    expect(approvalsLink?.getAttribute("href")).toBe("/approvals/pending");
+    expect(approvalsLink?.textContent).toContain("3");
 
     await act(async () => {
       root.unmount();

@@ -1,5 +1,6 @@
-import { NavLink } from "@/lib/router";
+import { NavLink, useLocation } from "@/lib/router";
 import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
+import { toCompanyRelativePath } from "../lib/company-routes";
 import { cn } from "../lib/utils";
 import { useSidebar } from "../context/SidebarContext";
 import type { LucideIcon } from "lucide-react";
@@ -9,6 +10,7 @@ interface SidebarNavItemProps {
   label: string;
   icon: LucideIcon;
   end?: boolean;
+  activePathPrefix?: string;
   className?: string;
   badge?: number;
   badgeTone?: "default" | "danger";
@@ -23,6 +25,7 @@ export function SidebarNavItem({
   label,
   icon: Icon,
   end,
+  activePathPrefix,
   className,
   badge,
   badgeTone = "default",
@@ -32,6 +35,10 @@ export function SidebarNavItem({
   liveCount,
 }: SidebarNavItemProps) {
   const { isMobile, setSidebarOpen } = useSidebar();
+  const location = useLocation();
+  const relativePathname = toCompanyRelativePath(location.pathname);
+  const isPrefixActive = activePathPrefix != null
+    && (relativePathname === activePathPrefix || relativePathname.startsWith(`${activePathPrefix}/`));
 
   return (
     <NavLink
@@ -42,7 +49,7 @@ export function SidebarNavItem({
       className={({ isActive }) =>
         cn(
           "flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium transition-colors",
-          isActive
+          isActive || isPrefixActive
             ? "bg-accent text-foreground"
             : "text-foreground/80 hover:bg-accent/50 hover:text-foreground",
           className,
