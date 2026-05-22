@@ -1,5 +1,6 @@
 import {
   Inbox,
+  ClipboardCheck,
   CircleDot,
   Target,
   LayoutDashboard,
@@ -88,6 +89,13 @@ export function Sidebar() {
             badge={inboxBadge.inbox}
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
             alert={inboxBadge.failedRuns > 0}
+          />
+          <SidebarNavItem
+            to="/approvals/pending"
+            label="Approvals"
+            icon={ClipboardCheck}
+            activePathPrefix="/approvals"
+            badge={inboxBadge.approvals}
           />
           <PluginSlotOutlet
             slotTypes={["sidebar"]}

@@ -35,4 +35,11 @@ describe("company routes", () => {
     expect(applyCompanyPrefix("/search?q=hello%20world", "PAP")).toBe("/PAP/search?q=hello%20world");
     expect(toCompanyRelativePath("/PAP/search?q=foo")).toBe("/search?q=foo");
   });
+
+  it("routes approvals through the active company prefix", () => {
+    expect(isBoardPathWithoutPrefix("/approvals/pending")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/approvals/pending")).toBeNull();
+    expect(applyCompanyPrefix("/approvals/pending", "SOU")).toBe("/SOU/approvals/pending");
+    expect(toCompanyRelativePath("/SOU/approvals/approval-123")).toBe("/approvals/approval-123");
+  });
 });
