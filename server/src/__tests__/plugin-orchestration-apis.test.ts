@@ -33,6 +33,7 @@ function createEventBusStub() {
       return {
         emit: async () => {},
         subscribe: () => {},
+        clear: () => {},
       };
     },
   } as any;

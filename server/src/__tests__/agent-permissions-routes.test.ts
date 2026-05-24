@@ -466,7 +466,7 @@ describe.sequential("agent permission routes", () => {
 
     expect(detailRes.status).toBe(200);
     expect(detailRes.body.adapterConfig.cwd).toBe("/tmp/workspace");
-    expect(detailRes.body.adapterConfig.env.PUBLIC_FLAG).toBe("enabled");
+    expect(detailRes.body.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.env.OPENAI_API_KEY).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.nested.accessToken).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.nested.mode).toBe("fast");
@@ -504,7 +504,7 @@ describe.sequential("agent permission routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.adapterConfig.env.ANTHROPIC_API_KEY).toBe("***REDACTED***");
-    expect(res.body.adapterConfig.env.FEATURE_MODE).toBe("test");
+    expect(res.body.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
     expect(JSON.stringify(res.body)).not.toContain("anthropic-secret");
   });
 
