@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
@@ -1069,11 +1070,45 @@ export function agentRoutes(
     return path.resolve(cwd, trimmed);
   }
 
-  function isPathWithinRoot(rootPath: string, candidatePath: string) {
-    const resolvedRoot = path.resolve(rootPath);
-    const resolvedCandidate = path.resolve(candidatePath);
+  function isPathWithinResolvedRoot(resolvedRoot: string, resolvedCandidate: string) {
     const relativePath = path.relative(resolvedRoot, resolvedCandidate);
     return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+  }
+
+  async function resolveExistingRealPath(candidatePath: string) {
+    let currentPath = path.resolve(candidatePath);
+    let missingSuffix = "";
+    while (true) {
+      try {
+        const realPath = await fs.realpath(currentPath);
+        return path.resolve(realPath, missingSuffix);
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") {
+          throw err;
+        }
+        const parent = path.dirname(currentPath);
+        if (parent === currentPath) {
+          throw unprocessable("Instructions path does not have an existing parent directory");
+        }
+        missingSuffix = path.join(path.basename(currentPath), missingSuffix);
+        currentPath = parent;
+      }
+    }
+  }
+
+  async function isPathWithinCanonicalRoot(rootPath: string, candidatePath: string) {
+    try {
+      const resolvedRoot = await fs.realpath(rootPath);
+      const resolvedCandidate = await resolveExistingRealPath(candidatePath);
+      return isPathWithinResolvedRoot(resolvedRoot, resolvedCandidate);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        return false;
+      }
+      throw err;
+    }
   }
 
   function resolveManagedInstructionsRoot(agent: { id: string; companyId: string }) {
@@ -1087,7 +1122,7 @@ export function agentRoutes(
     );
   }
 
-  function assertAgentWritableInstructionsFilePath(
+  async function assertAgentWritableInstructionsFilePath(
     resolvedPath: string,
     agent: { id: string; companyId: string },
     adapterConfig: Record<string, unknown>,
@@ -1103,7 +1138,9 @@ export function agentRoutes(
       safeRoots.push(cwd);
     }
 
-    if (safeRoots.some((rootPath) => isPathWithinRoot(rootPath, resolvedPath))) return;
+    for (const rootPath of safeRoots) {
+      if (await isPathWithinCanonicalRoot(rootPath, resolvedPath)) return;
+    }
 
     throw unprocessable(
       "Agent-authenticated instructions path must stay under the managed instructions root or adapterConfig.cwd",
@@ -2353,7 +2390,7 @@ export function agentRoutes(
 
     assertCompanyAccess(req, existing.companyId);
     if (req.actor.type === "board") {
-      assertBoardOrgAccess(req);
+      await assertBoardCanManageAgentsForCompany(req, existing.companyId);
     } else if (req.actor.type === "agent") {
       const actorAgentId = req.actor.agentId ?? null;
       if (!actorAgentId || req.actor.companyId !== existing.companyId) {
@@ -2387,7 +2424,7 @@ export function agentRoutes(
     } else {
       const resolvedPath = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
       if (req.actor.type !== "board") {
-        assertAgentWritableInstructionsFilePath(resolvedPath, existing, existingAdapterConfig);
+        await assertAgentWritableInstructionsFilePath(resolvedPath, existing, existingAdapterConfig);
       }
       nextAdapterConfig[adapterConfigKey] = resolvedPath;
     }
