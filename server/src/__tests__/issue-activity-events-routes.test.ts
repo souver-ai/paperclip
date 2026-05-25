@@ -373,7 +373,10 @@ describe("issue activity event routes", () => {
 
     const res = await request(await createApp(dbMock))
       .patch(`/api/issues/${issue.id}`)
-      .send({ status: "done" });
+      .send({
+        status: "done",
+        deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-activity-events-routes" }],
+      });
 
     expect(res.status).toBe(200);
     await vi.waitFor(() => {

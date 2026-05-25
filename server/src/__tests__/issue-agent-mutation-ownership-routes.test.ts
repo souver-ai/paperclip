@@ -102,6 +102,14 @@ function registerRouteMocks() {
     accessService: () => mockAccessService,
     agentService: () => mockAgentService,
     companyService: () => mockCompanyService,
+    deliveryProofService: () => ({
+      countForIssues: vi.fn(async () => new Map()),
+      createForIssue: vi.fn(),
+      getById: vi.fn(),
+      listForIssue: vi.fn(async () => []),
+      remove: vi.fn(),
+      update: vi.fn(),
+    }),
     documentService: () => mockDocumentService,
     executionWorkspaceService: () => ({}),
     feedbackService: () => ({

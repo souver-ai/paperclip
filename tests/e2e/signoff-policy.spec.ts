@@ -25,6 +25,14 @@ const PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3199);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const COMPANY_NAME = `E2E-Signoff-${Date.now()}`;
 
+function terminalProof(name: string) {
+  return {
+    name,
+    command: "playwright signoff-policy.spec.ts",
+    surface: "paperclip",
+  };
+}
+
 interface AgentAuth {
   agentId: string;
   token: string;
@@ -319,7 +327,7 @@ test.describe("Signoff execution policy", () => {
     // Step 5: Approver approves → should complete
     const step5Res = await agentPatch(
       ctx.boardRequest, ctx.approver, issueId,
-      { status: "done", comment: "Approved. Ship it." },
+      { status: "done", comment: "Approved. Ship it.", deliveryProofs: [terminalProof("Approver signoff")] },
     );
     expect(step5Res.ok()).toBe(true);
     const step5Issue = await step5Res.json();
@@ -432,7 +440,7 @@ test.describe("Signoff execution policy", () => {
     // Reviewer approves → should complete immediately (no approval stage)
     const approveRes = await agentPatch(
       ctx.boardRequest, ctx.reviewer, issue.id,
-      { status: "done", comment: "LGTM." },
+      { status: "done", comment: "LGTM.", deliveryProofs: [terminalProof("Review-only signoff")] },
     );
     expect(approveRes.ok()).toBe(true);
     const doneIssue = await approveRes.json();
