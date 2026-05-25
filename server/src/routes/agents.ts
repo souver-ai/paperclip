@@ -49,6 +49,7 @@ import {
   workspaceOperationService,
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -73,7 +74,7 @@ import {
   refreshAdapterModels,
   requireServerAdapter,
 } from "../adapters/index.js";
-import { redactEventPayload } from "../redaction.js";
+import { redactConfigForRead, redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
@@ -1072,6 +1073,47 @@ export function agentRoutes(
     return path.resolve(cwd, trimmed);
   }
 
+  function isPathWithinRoot(rootPath: string, candidatePath: string) {
+    const resolvedRoot = path.resolve(rootPath);
+    const resolvedCandidate = path.resolve(candidatePath);
+    const relativePath = path.relative(resolvedRoot, resolvedCandidate);
+    return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+  }
+
+  function resolveManagedInstructionsRoot(agent: { id: string; companyId: string }) {
+    return path.resolve(
+      resolvePaperclipInstanceRoot(),
+      "companies",
+      agent.companyId,
+      "agents",
+      agent.id,
+      "instructions",
+    );
+  }
+
+  function assertAgentWritableInstructionsFilePath(
+    resolvedPath: string,
+    agent: { id: string; companyId: string },
+    adapterConfig: Record<string, unknown>,
+  ) {
+    const basename = path.basename(resolvedPath);
+    if (basename === ".env" || basename.startsWith(".env.") || basename === ".paperclip.env") {
+      throw unprocessable("Agent-authenticated instructions path cannot point to sensitive environment files");
+    }
+
+    const safeRoots = [resolveManagedInstructionsRoot(agent)];
+    const cwd = asNonEmptyString(adapterConfig.cwd);
+    if (cwd && path.isAbsolute(cwd)) {
+      safeRoots.push(cwd);
+    }
+
+    if (safeRoots.some((rootPath) => isPathWithinRoot(rootPath, resolvedPath))) return;
+
+    throw unprocessable(
+      "Agent-authenticated instructions path must stay under the managed instructions root or adapterConfig.cwd",
+    );
+  }
+
   async function materializeDefaultInstructionsBundleForNewAgent<T extends {
     id: string;
     companyId: string;
@@ -1136,12 +1178,69 @@ export function agentRoutes(
 
   async function assertCanManageInstructionsPath(req: Request, targetAgent: { id: string; companyId: string }) {
     assertCompanyAccess(req, targetAgent.companyId);
-    if (req.actor.type !== "board") {
-      throw forbidden(
-        "Only board-authenticated callers can manage instructions path or bundle configuration",
-      );
+    if (req.actor.type === "board") {
+      await assertBoardCanManageAgentsForCompany(req, targetAgent.companyId);
+      return;
     }
-    await assertBoardCanManageAgentsForCompany(req, targetAgent.companyId);
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+    if (req.actor.agentId === targetAgent.id) return;
+
+    const chainOfCommand = await svc.getChainOfCommand(targetAgent.id);
+    if (chainOfCommand.some((manager) => manager.id === req.actor.agentId)) return;
+
+    throw forbidden(
+      "Only the target agent, an ancestor manager, or a board-authenticated caller can manage instructions path or bundle configuration",
+    );
+  }
+
+  async function assertCanVerifyInstructionsPath(
+    req: Request,
+    targetAgent: { id: string; companyId: string },
+  ) {
+    assertCompanyAccess(req, targetAgent.companyId);
+    if (req.actor.type === "board") {
+      await assertCanReadConfigurations(req, targetAgent.companyId);
+      return;
+    }
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+
+    const actorAgent = await svc.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== targetAgent.companyId) {
+      throw forbidden("Agent key cannot access another company");
+    }
+    if (actorAgent.id === targetAgent.id) return;
+    if (actorAgent.role === "security") return;
+
+    const allowedByGrant = await access.hasPermission(
+      targetAgent.companyId,
+      "agent",
+      actorAgent.id,
+      "agents:create",
+    );
+    if (allowedByGrant || canCreateAgents(actorAgent)) return;
+
+    const chainOfCommand = await svc.getChainOfCommand(targetAgent.id);
+    if (chainOfCommand.some((manager) => manager.id === actorAgent.id)) return;
+
+    throw forbidden("Missing permission to verify agent instructions path");
+  }
+
+  function readInstructionsPathVerification(agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>, rawKey: unknown) {
+    const explicitKey = asNonEmptyString(rawKey);
+    if (explicitKey && !KNOWN_INSTRUCTIONS_PATH_KEYS.has(explicitKey)) {
+      throw unprocessable("Unsupported instructions path adapterConfigKey");
+    }
+    const defaultKey = resolveInstructionsPathKey(agent.adapterType);
+    const adapterConfigKey = explicitKey ?? defaultKey;
+    const adapterConfig = asRecord(agent.adapterConfig) ?? {};
+    const pathValue = adapterConfigKey ? asNonEmptyString(adapterConfig[adapterConfigKey]) : null;
+    return {
+      agentId: agent.id,
+      adapterType: agent.adapterType,
+      adapterConfigKey,
+      path: pathValue,
+      configured: Boolean(pathValue),
+    };
   }
 
   function assertNoAgentInstructionsConfigMutation(
@@ -1279,10 +1378,6 @@ export function agentRoutes(
     };
   }
 
-  function redactConfigForRead(value: unknown): Record<string, unknown> {
-    return redactEventPayload(asRecord(value) ?? {}) ?? {};
-  }
-
   function redactAgentForRead<T extends { adapterConfig?: unknown; runtimeConfig?: unknown }>(agent: T): T {
     return {
       ...agent,
@@ -1314,16 +1409,8 @@ export function agentRoutes(
     const record = snapshot as Record<string, unknown>;
     return {
       ...record,
-      adapterConfig: redactEventPayload(
-        typeof record.adapterConfig === "object" && record.adapterConfig !== null
-          ? (record.adapterConfig as Record<string, unknown>)
-          : {},
-      ),
-      runtimeConfig: redactEventPayload(
-        typeof record.runtimeConfig === "object" && record.runtimeConfig !== null
-          ? (record.runtimeConfig as Record<string, unknown>)
-          : {},
-      ),
+      adapterConfig: redactConfigForRead(record.adapterConfig),
+      runtimeConfig: redactConfigForRead(record.runtimeConfig),
       metadata:
         typeof record.metadata === "object" && record.metadata !== null
           ? redactEventPayload(record.metadata as Record<string, unknown>)
@@ -2036,13 +2123,9 @@ export function agentRoutes(
     if (requiresApproval) {
       const requestedAdapterType = normalizedHireInput.adapterType ?? agent.adapterType;
       const requestedAdapterConfig =
-        redactEventPayload(
-          (agent.adapterConfig ?? normalizedHireInput.adapterConfig) as Record<string, unknown>,
-        ) ?? {};
+        redactConfigForRead(agent.adapterConfig ?? normalizedHireInput.adapterConfig);
       const requestedRuntimeConfig =
-        redactEventPayload(
-          (normalizedHireInput.runtimeConfig ?? agent.runtimeConfig) as Record<string, unknown>,
-        ) ?? {};
+        redactConfigForRead(normalizedHireInput.runtimeConfig ?? agent.runtimeConfig);
       const requestedMetadata =
         redactEventPayload(
           ((normalizedHireInput.metadata ?? agent.metadata ?? {}) as Record<string, unknown>),
@@ -2134,7 +2217,7 @@ export function agentRoutes(
       });
     }
 
-    res.status(201).json({ agent, approval });
+    res.status(201).json({ agent: redactAgentForRead(agent), approval });
   });
 
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
@@ -2318,10 +2401,6 @@ export function agentRoutes(
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {
-    if (req.actor.type !== "board") {
-      throw forbidden("Only board-authenticated callers can manage instructions path or bundle configuration");
-    }
-
     const id = req.params.id as string;
     const existing = await svc.getById(id);
     if (!existing) {
@@ -2346,7 +2425,11 @@ export function agentRoutes(
     if (req.body.path === null) {
       delete nextAdapterConfig[adapterConfigKey];
     } else {
-      nextAdapterConfig[adapterConfigKey] = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      const resolvedPath = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      if (req.actor.type !== "board") {
+        assertAgentWritableInstructionsFilePath(resolvedPath, existing, existingAdapterConfig);
+      }
+      nextAdapterConfig[adapterConfigKey] = resolvedPath;
     }
 
     const syncedAdapterConfig = syncInstructionsBundleConfigFromFilePath(existing, nextAdapterConfig);
@@ -2397,6 +2480,18 @@ export function agentRoutes(
       adapterConfigKey,
       path: pathValue,
     });
+  });
+
+  router.get("/agents/:id/instructions-path", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    await assertCanVerifyInstructionsPath(req, agent);
+    res.json(readInstructionsPathVerification(agent, req.query.adapterConfigKey));
   });
 
   router.get("/agents/:id/instructions-bundle", async (req, res) => {

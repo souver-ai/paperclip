@@ -466,7 +466,7 @@ describe.sequential("agent permission routes", () => {
 
     expect(detailRes.status).toBe(200);
     expect(detailRes.body.adapterConfig.cwd).toBe("/tmp/workspace");
-    expect(detailRes.body.adapterConfig.env.PUBLIC_FLAG).toBe("enabled");
+    expect(detailRes.body.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.env.OPENAI_API_KEY).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.nested.accessToken).toBe("***REDACTED***");
     expect(detailRes.body.adapterConfig.nested.mode).toBe("fast");
@@ -504,7 +504,7 @@ describe.sequential("agent permission routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.adapterConfig.env.ANTHROPIC_API_KEY).toBe("***REDACTED***");
-    expect(res.body.adapterConfig.env.FEATURE_MODE).toBe("test");
+    expect(res.body.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
     expect(JSON.stringify(res.body)).not.toContain("anthropic-secret");
   });
 
@@ -769,7 +769,80 @@ describe.sequential("agent permission routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   }, 15_000);
 
-  it("blocks agent-authenticated instructions-path updates", async () => {
+  it("allows agent-authenticated self instructions-path updates through the dedicated route", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+      },
+    });
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+    mockAgentService.update.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+        instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+      },
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/tmp/agents/builder/AGENTS.md", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      agentId,
+      {
+        adapterConfig: {
+          cwd: "/tmp/agents/builder",
+          instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+        },
+      },
+      expect.objectContaining({
+        recordRevision: expect.objectContaining({
+          createdByAgentId: agentId,
+          createdByUserId: null,
+          source: "instructions_path_patch",
+        }),
+      }),
+    );
+    expect(res.body).toEqual({
+      agentId,
+      adapterType: "process",
+      adapterConfigKey: "instructionsFilePath",
+      path: "/tmp/agents/builder/AGENTS.md",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: "agent",
+        actorId: agentId,
+        agentId,
+        runId: "run-1",
+        action: "agent.instructions_path_updated",
+      }),
+    );
+  });
+
+  it.each([
+    ["/etc/passwd"],
+    ["/tmp/agents/builder/.env"],
+    ["/tmp/agents/builder/.env.local"],
+    ["/tmp/agents/builder/.paperclip.env"],
+    ["/tmp/agents/other/AGENTS.md"],
+  ])("blocks agent-authenticated self instructions-path updates to unsafe host paths (%s)", async (unsafePath) => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+      },
+    });
     const app = await createApp({
       type: "agent",
       agentId,
@@ -780,11 +853,258 @@ describe.sequential("agent permission routes", () => {
 
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
       .patch(`/api/agents/${agentId}/instructions-path`)
-      .send({ path: "/etc/passwd" }));
+      .send({ path: unsafePath, adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(422);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("preserves board-authenticated absolute instructions-path updates", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+    mockAgentService.update.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        instructionsFilePath: "/etc/passwd",
+      },
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/etc/passwd", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      agentId,
+      {
+        adapterConfig: {
+          instructionsFilePath: "/etc/passwd",
+        },
+      },
+      expect.anything(),
+    );
+  });
+
+  it("allows ancestor managers to update a report's instructions path through the dedicated route", async () => {
+    const managerId = "33333333-3333-4333-8333-333333333333";
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      reportsTo: managerId,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+      },
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerId, name: "CTO", role: "cto", title: "CTO" },
+    ]);
+    mockAgentService.update.mockResolvedValue({
+      ...baseAgent,
+      reportsTo: managerId,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+        instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+      },
+    });
+    const app = await createApp({
+      type: "agent",
+      agentId: managerId,
+      companyId,
+      source: "agent_key",
+      runId: "run-manager",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/tmp/agents/builder/AGENTS.md", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      agentId,
+      {
+        adapterConfig: {
+          cwd: "/tmp/agents/builder",
+          instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+        },
+      },
+      expect.objectContaining({
+        recordRevision: expect.objectContaining({
+          createdByAgentId: managerId,
+          createdByUserId: null,
+          source: "instructions_path_patch",
+        }),
+      }),
+    );
+  });
+
+  it("blocks ancestor managers from setting a report's instructions path outside safe roots", async () => {
+    const managerId = "33333333-3333-4333-8333-333333333333";
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      reportsTo: managerId,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+      },
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerId, name: "CTO", role: "cto", title: "CTO" },
+    ]);
+    const app = await createApp({
+      type: "agent",
+      agentId: managerId,
+      companyId,
+      source: "agent_key",
+      runId: "run-manager",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/etc/passwd", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(422);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("blocks unrelated agent-authenticated instructions-path updates", async () => {
+    const otherAgentId = "44444444-4444-4444-8444-444444444444";
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: "33333333-3333-4333-8333-333333333333", name: "CTO", role: "cto", title: "CTO" },
+    ]);
+    const app = await createApp({
+      type: "agent",
+      agentId: otherAgentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/tmp/agents/builder/AGENTS.md", adapterConfigKey: "instructionsFilePath" }));
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toContain("instructions path or bundle configuration");
+    expect(res.body.error).toContain("ancestor manager");
+    expect(mockAgentService.update).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("allows security agents to verify only the instructions path", async () => {
+    const targetAgent = {
+      ...baseAgent,
+      adapterType: "codex_local",
+      adapterConfig: {
+        instructionsFilePath: "/tmp/agent/AGENTS.md",
+        env: {
+          OPENAI_API_KEY: "sk-test-secret",
+        },
+      },
+    };
+    const securityAgent = {
+      ...baseAgent,
+      id: "33333333-3333-4333-8333-333333333333",
+      role: "security",
+      adapterConfig: {},
+    };
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === securityAgent.id) return securityAgent;
+      return targetAgent;
+    });
+
+    const app = await createApp({
+      type: "agent",
+      agentId: securityAgent.id,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .get(`/api/agents/${agentId}/instructions-path`));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      agentId,
+      adapterType: "codex_local",
+      adapterConfigKey: "instructionsFilePath",
+      path: "/tmp/agent/AGENTS.md",
+      configured: true,
+    });
+    expect(JSON.stringify(res.body)).not.toContain("sk-test-secret");
+  });
+
+  it("allows manager-chain agents to verify a report's instructions path", async () => {
+    const managerAgent = {
+      ...baseAgent,
+      id: "33333333-3333-4333-8333-333333333333",
+      role: "cto",
+      adapterConfig: {},
+    };
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === managerAgent.id) return managerAgent;
+      return {
+        ...baseAgent,
+        adapterType: "claude_local",
+        adapterConfig: {
+          instructionsFilePath: "/tmp/report/AGENTS.md",
+        },
+      };
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerAgent.id, name: "CTO", role: "cto", title: "CTO" },
+    ]);
+
+    const app = await createApp({
+      type: "agent",
+      agentId: managerAgent.id,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .get(`/api/agents/${agentId}/instructions-path`));
+
+    expect(res.status).toBe(200);
+    expect(res.body.path).toBe("/tmp/report/AGENTS.md");
+  });
+
+  it("blocks unrelated agents from verifying instructions paths", async () => {
+    const unrelatedAgent = {
+      ...baseAgent,
+      id: "33333333-3333-4333-8333-333333333333",
+      adapterConfig: {},
+    };
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === unrelatedAgent.id) return unrelatedAgent;
+      return {
+        ...baseAgent,
+        adapterType: "codex_local",
+        adapterConfig: {
+          instructionsFilePath: "/tmp/agent/AGENTS.md",
+        },
+      };
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([]);
+
+    const app = await createApp({
+      type: "agent",
+      agentId: unrelatedAgent.id,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .get(`/api/agents/${agentId}/instructions-path`));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("Missing permission to verify agent instructions path");
   });
 
   it("blocks agent-authenticated hires that set instructions bundle config", async () => {
@@ -1105,6 +1425,107 @@ describe.sequential("agent permission routes", () => {
             maxConcurrentRuns: 20,
           },
         },
+      }),
+    );
+  });
+
+  it("redacts adapter env values from approval-required hire responses and approval snapshots", async () => {
+    mockAgentService.create.mockResolvedValue({
+      ...baseAgent,
+      status: "pending_approval",
+      adapterConfig: {
+        model: "gpt-test",
+        env: {
+          PUBLIC_FLAG: "enabled",
+        },
+      },
+      runtimeConfig: {
+        modelProfiles: {
+          cheap: {
+            adapterConfig: {
+              model: "qwen-3.6",
+              env: {
+                FEATURE_MODE: "test",
+              },
+            },
+          },
+        },
+      },
+    });
+    mockApprovalService.create.mockImplementation(async (_companyId, input) => ({
+      id: "approval-1",
+      ...input,
+    }));
+
+    const app = await createApp(
+      {
+        type: "board",
+        userId: "board-user",
+        source: "local_implicit",
+        isInstanceAdmin: true,
+        companyIds: [companyId],
+      },
+      { requireBoardApprovalForNewAgents: true },
+    );
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .post(`/api/companies/${companyId}/agent-hires`)
+      .send({
+        name: "Builder",
+        role: "engineer",
+        adapterType: "process",
+        adapterConfig: {
+          model: "gpt-test",
+          env: {
+            PUBLIC_FLAG: "enabled",
+          },
+        },
+        runtimeConfig: {
+          modelProfiles: {
+            cheap: {
+              adapterConfig: {
+                model: "qwen-3.6",
+                env: {
+                  FEATURE_MODE: "test",
+                },
+              },
+            },
+          },
+        },
+      }));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.agent.adapterConfig.model).toBe("gpt-test");
+    expect(res.body.agent.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(res.body.agent.runtimeConfig.modelProfiles.cheap.adapterConfig.model).toBe("qwen-3.6");
+    expect(res.body.agent.runtimeConfig.modelProfiles.cheap.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
+    expect(res.body.approval.payload.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(res.body.approval.payload.runtimeConfig.modelProfiles.cheap.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
+    expect(res.body.approval.payload.requestedConfigurationSnapshot.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(res.body.approval.payload.requestedConfigurationSnapshot.runtimeConfig.modelProfiles.cheap.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
+    expect(JSON.stringify(res.body)).not.toContain("\"PUBLIC_FLAG\":\"enabled\"");
+    expect(JSON.stringify(res.body)).not.toContain("\"FEATURE_MODE\":\"test\"");
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      companyId,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          adapterConfig: expect.objectContaining({
+            env: {
+              PUBLIC_FLAG: "***REDACTED***",
+            },
+          }),
+          runtimeConfig: expect.objectContaining({
+            modelProfiles: expect.objectContaining({
+              cheap: expect.objectContaining({
+                adapterConfig: expect.objectContaining({
+                  env: {
+                    FEATURE_MODE: "***REDACTED***",
+                  },
+                }),
+              }),
+            }),
+          }),
+        }),
       }),
     );
   });

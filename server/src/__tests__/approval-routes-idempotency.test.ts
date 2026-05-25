@@ -336,4 +336,64 @@ describe("approval routes idempotent retries", () => {
       }),
     );
   });
+
+  it("redacts hire approval config env values from generic approval responses", async () => {
+    mockSecretService.normalizeHireApprovalPayloadForPersistence.mockImplementation(
+      async (_companyId, payload) => payload,
+    );
+    mockApprovalService.create.mockImplementation(async (companyId, input) => ({
+      id: "approval-7",
+      companyId,
+      ...input,
+      createdAt: new Date("2026-04-06T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-06T00:00:00.000Z"),
+    }));
+
+    const res = await request(await createApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "hire_agent",
+        payload: {
+          title: "Hire CTO",
+          adapterConfig: {
+            model: "gpt-test",
+            env: {
+              PUBLIC_FLAG: "enabled",
+              GH_TOKEN: "github-token",
+            },
+          },
+          runtimeConfig: {
+            modelProfiles: {
+              cheap: {
+                adapterConfig: {
+                  model: "qwen-3.6",
+                  env: {
+                    FEATURE_MODE: "test",
+                  },
+                },
+              },
+            },
+          },
+          requestedConfigurationSnapshot: {
+            adapterConfig: {
+              env: {
+                SNAPSHOT_TOKEN: "snapshot-token",
+              },
+            },
+          },
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockSecretService.normalizeHireApprovalPayloadForPersistence).toHaveBeenCalled();
+    expect(res.body.payload.adapterConfig.model).toBe("gpt-test");
+    expect(res.body.payload.adapterConfig.env.PUBLIC_FLAG).toBe("***REDACTED***");
+    expect(res.body.payload.adapterConfig.env.GH_TOKEN).toBe("***REDACTED***");
+    expect(res.body.payload.runtimeConfig.modelProfiles.cheap.adapterConfig.model).toBe("qwen-3.6");
+    expect(res.body.payload.runtimeConfig.modelProfiles.cheap.adapterConfig.env.FEATURE_MODE).toBe("***REDACTED***");
+    expect(res.body.payload.requestedConfigurationSnapshot.adapterConfig.env.SNAPSHOT_TOKEN).toBe("***REDACTED***");
+    expect(JSON.stringify(res.body)).not.toContain("enabled");
+    expect(JSON.stringify(res.body)).not.toContain("github-token");
+    expect(JSON.stringify(res.body)).not.toContain("snapshot-token");
+  });
 });

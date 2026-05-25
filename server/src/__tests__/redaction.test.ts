@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { REDACTED_EVENT_VALUE, redactEventPayload, redactSensitiveText, sanitizeRecord } from "../redaction.js";
+import {
+  REDACTED_EVENT_VALUE,
+  redactConfigFieldsForRead,
+  redactConfigForRead,
+  redactEventPayload,
+  redactSensitiveText,
+  sanitizeRecord,
+} from "../redaction.js";
 
 describe("redaction", () => {
   it("redacts sensitive keys and nested secret values", () => {
@@ -62,6 +69,78 @@ describe("redaction", () => {
       password: REDACTED_EVENT_VALUE,
       safe: "value",
     });
+  });
+
+  it("redacts every adapter env binding when reading agent config", () => {
+    const result = redactConfigForRead({
+      cwd: "/tmp/workspace",
+      env: {
+        PUBLIC_FLAG: "enabled",
+        OPENAI_API_KEY: "sk-openai",
+        SECRET_FROM_STORE: {
+          type: "secret_ref",
+          secretId: "11111111-1111-1111-1111-111111111111",
+        },
+      },
+      nested: {
+        accessToken: "nested-token",
+        mode: "fast",
+      },
+    });
+
+    expect(result).toEqual({
+      cwd: "/tmp/workspace",
+      env: {
+        PUBLIC_FLAG: REDACTED_EVENT_VALUE,
+        OPENAI_API_KEY: REDACTED_EVENT_VALUE,
+        SECRET_FROM_STORE: {
+          type: "secret_ref",
+          secretId: "11111111-1111-1111-1111-111111111111",
+        },
+      },
+      nested: {
+        accessToken: REDACTED_EVENT_VALUE,
+        mode: "fast",
+      },
+    });
+  });
+
+  it("redacts config fields inside approval payloads", () => {
+    const result = redactConfigFieldsForRead({
+      title: "Hire agent",
+      adapterConfig: {
+        env: { PUBLIC_FLAG: "enabled" },
+      },
+      runtimeConfig: {
+        modelProfiles: {
+          cheap: {
+            adapterConfig: {
+              env: { FEATURE_MODE: "test" },
+            },
+          },
+        },
+      },
+      requestedConfigurationSnapshot: {
+        adapterConfig: {
+          env: { GH_TOKEN: "github-token" },
+        },
+      },
+    });
+
+    expect(result?.adapterConfig).toEqual({
+      env: { PUBLIC_FLAG: REDACTED_EVENT_VALUE },
+    });
+    const runtimeConfig = result?.runtimeConfig as {
+      modelProfiles?: { cheap?: { adapterConfig?: { env?: Record<string, unknown> } } };
+    };
+    const requestedConfigurationSnapshot = result?.requestedConfigurationSnapshot as {
+      adapterConfig?: { env?: Record<string, unknown> };
+    };
+    expect(runtimeConfig.modelProfiles?.cheap?.adapterConfig?.env?.FEATURE_MODE).toBe(REDACTED_EVENT_VALUE);
+    expect(requestedConfigurationSnapshot.adapterConfig?.env?.GH_TOKEN).toBe(REDACTED_EVENT_VALUE);
+    expect(JSON.stringify(result)).not.toContain("enabled");
+    expect(JSON.stringify(result)).not.toContain("test");
+    expect(JSON.stringify(result)).not.toContain("github-token");
   });
 
   it("redacts common secret shapes from unstructured text", () => {
