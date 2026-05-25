@@ -49,6 +49,7 @@ import {
   workspaceOperationService,
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -1060,6 +1061,47 @@ export function agentRoutes(
       throw unprocessable("adapterConfig.cwd must be an absolute path to resolve relative instructions path");
     }
     return path.resolve(cwd, trimmed);
+  }
+
+  function isPathWithinRoot(rootPath: string, candidatePath: string) {
+    const resolvedRoot = path.resolve(rootPath);
+    const resolvedCandidate = path.resolve(candidatePath);
+    const relativePath = path.relative(resolvedRoot, resolvedCandidate);
+    return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+  }
+
+  function resolveManagedInstructionsRoot(agent: { id: string; companyId: string }) {
+    return path.resolve(
+      resolvePaperclipInstanceRoot(),
+      "companies",
+      agent.companyId,
+      "agents",
+      agent.id,
+      "instructions",
+    );
+  }
+
+  function assertAgentWritableInstructionsFilePath(
+    resolvedPath: string,
+    agent: { id: string; companyId: string },
+    adapterConfig: Record<string, unknown>,
+  ) {
+    const basename = path.basename(resolvedPath);
+    if (basename === ".env" || basename.startsWith(".env.") || basename === ".paperclip.env") {
+      throw unprocessable("Agent-authenticated instructions path cannot point to sensitive environment files");
+    }
+
+    const safeRoots = [resolveManagedInstructionsRoot(agent)];
+    const cwd = asNonEmptyString(adapterConfig.cwd);
+    if (cwd && path.isAbsolute(cwd)) {
+      safeRoots.push(cwd);
+    }
+
+    if (safeRoots.some((rootPath) => isPathWithinRoot(rootPath, resolvedPath))) return;
+
+    throw unprocessable(
+      "Agent-authenticated instructions path must stay under the managed instructions root or adapterConfig.cwd",
+    );
   }
 
   async function materializeDefaultInstructionsBundleForNewAgent<T extends {
@@ -2324,7 +2366,11 @@ export function agentRoutes(
     if (req.body.path === null) {
       delete nextAdapterConfig[adapterConfigKey];
     } else {
-      nextAdapterConfig[adapterConfigKey] = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      const resolvedPath = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      if (req.actor.type !== "board") {
+        assertAgentWritableInstructionsFilePath(resolvedPath, existing, existingAdapterConfig);
+      }
+      nextAdapterConfig[adapterConfigKey] = resolvedPath;
     }
 
     const syncedAdapterConfig = syncInstructionsBundleConfigFromFilePath(existing, nextAdapterConfig);
