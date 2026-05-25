@@ -20,6 +20,7 @@ import {
   createIssueAttachmentMetadataSchema,
   createIssueThreadInteractionSchema,
   createIssueWorkProductSchema,
+  createIssueDeliveryProofSchema,
   createIssueLabelSchema,
   checkoutIssueSchema,
   createChildIssueSchema,
@@ -37,6 +38,7 @@ import {
   restoreIssueDocumentRevisionSchema,
   respondIssueThreadInteractionSchema,
   updateIssueWorkProductSchema,
+  updateIssueDeliveryProofSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
   getClosedIsolatedExecutionWorkspaceMessage,
@@ -63,6 +65,7 @@ import {
   heartbeatService,
   issueApprovalService,
   issueRecoveryActionService,
+  deliveryProofService,
   issueThreadInteractionService,
   ISSUE_LIST_DEFAULT_LIMIT,
   ISSUE_LIST_MAX_LIMIT,
@@ -113,6 +116,9 @@ import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
   interrupt: z.boolean().optional(),
+});
+const updateIssueWithDeliveryProofsRouteSchema = updateIssueRouteSchema.extend({
+  deliveryProofs: z.array(createIssueDeliveryProofSchema).max(20).optional(),
 });
 
 type ParsedExecutionState = NonNullable<ReturnType<typeof parseIssueExecutionState>>;
@@ -841,6 +847,7 @@ export function issueRoutes(
   const recoveryActionsSvc = issueRecoveryActionService(db);
   const executionWorkspacesSvc = executionWorkspaceServiceDirect(db);
   const workProductsSvc = workProductService(db);
+  const deliveryProofsSvc = deliveryProofService(db);
   const documentsSvc = documentService(db);
   const issueReferencesSvc = issueReferenceService(db);
   const routinesSvc = routineService(db, {
@@ -1491,6 +1498,8 @@ export function issueRoutes(
       parentId: req.query.parentId as string | undefined,
       descendantOf: req.query.descendantOf as string | undefined,
       labelId: req.query.labelId as string | undefined,
+      category: req.query.category as string | undefined,
+      surface: (req.query.surface ?? req.query.surfaces) as string | undefined,
       originKind: req.query.originKind as string | undefined,
       originKindPrefix: req.query.originKindPrefix as string | undefined,
       originId: req.query.originId as string | undefined,
@@ -1508,12 +1517,15 @@ export function issueRoutes(
       offset,
     });
     const issueIds = result.map((issue) => issue.id);
-    const [handoffStates, recoveryActionByIssue] = await Promise.all([
+    const [handoffStates, recoveryActionByIssue, deliveryProofCounts] = await Promise.all([
       listSuccessfulRunHandoffStates(db, companyId, issueIds),
       recoveryActionsSvc.listActiveForIssues(companyId, issueIds),
+      deliveryProofsSvc.countForIssues(issueIds),
     ]);
     res.json(result.map((issue) => ({
       ...issue,
+      deliveryProofCount: deliveryProofCounts.get(issue.id) ?? 0,
+      missingDeliveryProof: issue.status === "done" && (deliveryProofCounts.get(issue.id) ?? 0) === 0,
       successfulRunHandoff: handoffStates.get(issue.id) ?? null,
       activeRecoveryAction: recoveryActionByIssue.get(issue.id) ?? null,
     })));
@@ -1544,6 +1556,8 @@ export function issueRoutes(
       parentId: req.query.parentId as string | undefined,
       descendantOf: req.query.descendantOf as string | undefined,
       labelId: req.query.labelId as string | undefined,
+      category: req.query.category as string | undefined,
+      surface: (req.query.surface ?? req.query.surfaces) as string | undefined,
       originKind: req.query.originKind as string | undefined,
       originKindPrefix: req.query.originKindPrefix as string | undefined,
       originId: req.query.originId as string | undefined,
@@ -1764,6 +1778,7 @@ export function issueRoutes(
       successfulRunHandoffStates,
       scheduledRetry,
       activeRecoveryAction,
+      deliveryProofs,
     ] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
@@ -1776,6 +1791,7 @@ export function issueRoutes(
       listSuccessfulRunHandoffStates(db, issue.companyId, [issue.id]),
       svc.getCurrentScheduledRetry(issue.id),
       recoveryActionsSvc.getActiveForIssue(issue.companyId, issue.id),
+      deliveryProofsSvc.listForIssue(issue.id),
     ]);
     const recoveryActionsByRelationIssue = await relationRecoveryActionMap(
       recoveryActionsSvc,
@@ -1812,6 +1828,9 @@ export function issueRoutes(
       mentionedProjects,
       currentExecutionWorkspace,
       workProducts,
+      deliveryProofs,
+      deliveryProofCount: deliveryProofs.length,
+      missingDeliveryProof: issue.status === "done" && deliveryProofs.length === 0,
     });
   });
 
@@ -1967,6 +1986,18 @@ export function issueRoutes(
     assertCompanyAccess(req, issue.companyId);
     const workProducts = await workProductsSvc.listForIssue(issue.id);
     res.json(workProducts);
+  });
+
+  router.get("/issues/:id/delivery-proofs", async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const proofs = await deliveryProofsSvc.listForIssue(issue.id);
+    res.json(proofs);
   });
 
   router.get("/issues/:id/documents", async (req, res) => {
@@ -2283,6 +2314,103 @@ export function issueRoutes(
       details: { workProductId: product.id, type: product.type, provider: product.provider },
     });
     res.status(201).json(product);
+  });
+
+  router.post("/issues/:id/delivery-proofs", validate(createIssueDeliveryProofSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    const proof = await deliveryProofsSvc.createForIssue(issue.id, issue.companyId, req.body);
+    if (!proof) {
+      res.status(422).json({ error: "Invalid delivery proof payload" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.delivery_proof_created",
+      entityType: "issue",
+      entityId: issue.id,
+      details: { deliveryProofId: proof.id, name: proof.name, surface: proof.surface },
+    });
+    res.status(201).json(proof);
+  });
+
+  router.patch("/delivery-proofs/:id", validate(updateIssueDeliveryProofSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await deliveryProofsSvc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Delivery proof not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+    const issue = await svc.getById(existing.issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    const proof = await deliveryProofsSvc.update(id, req.body);
+    if (!proof) {
+      res.status(404).json({ error: "Delivery proof not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: existing.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.delivery_proof_updated",
+      entityType: "issue",
+      entityId: existing.issueId,
+      details: { deliveryProofId: proof.id, changedKeys: Object.keys(req.body).sort() },
+    });
+    res.json(proof);
+  });
+
+  router.delete("/delivery-proofs/:id", async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await deliveryProofsSvc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Delivery proof not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+    const issue = await svc.getById(existing.issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
+    const removed = await deliveryProofsSvc.remove(id);
+    if (!removed) {
+      res.status(404).json({ error: "Delivery proof not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: existing.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.delivery_proof_deleted",
+      entityType: "issue",
+      entityId: existing.issueId,
+      details: { deliveryProofId: removed.id, name: removed.name },
+    });
+    res.json(removed);
   });
 
   router.patch("/work-products/:id", validate(updateIssueWorkProductSchema), async (req, res) => {
@@ -2791,7 +2919,7 @@ export function issueRoutes(
     res.json(result);
   });
 
-  router.patch("/issues/:id", validate(updateIssueRouteSchema), async (req, res) => {
+  router.patch("/issues/:id", validate(updateIssueWithDeliveryProofsRouteSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await svc.getById(id);
     if (!existing) {
@@ -2803,6 +2931,16 @@ export function issueRoutes(
     if (!(await assertAgentIssueMutationAllowed(req, res, existing))) return;
 
     const actor = getActorInfo(req);
+    const requestedDeliveryProofs = Array.isArray(req.body.deliveryProofs) ? req.body.deliveryProofs : [];
+    const isDoneTransitionRequested = existing.status !== "done" && req.body.status === "done";
+    const existingDeliveryProofCount = (await deliveryProofsSvc.countForIssues([existing.id])).get(existing.id) ?? 0;
+    if (isDoneTransitionRequested && existingDeliveryProofCount === 0 && requestedDeliveryProofs.length === 0) {
+      res.status(422).json({
+        error: "Delivery proof required before moving an issue to done",
+        code: "delivery_proof_required",
+      });
+      return;
+    }
     const isClosed = isClosedIssueStatus(existing.status);
     const isBlocked = existing.status === "blocked";
     const normalizedAssigneeAgentId = await normalizeIssueAssigneeAgentReference(
@@ -2821,8 +2959,10 @@ export function issueRoutes(
       resume: resumeRequested,
       interrupt: interruptRequested,
       hiddenAt: hiddenAtRaw,
+      deliveryProofs: _deliveryProofs,
       ...updateFields
     } = req.body;
+    void _deliveryProofs;
     const shouldCancelActiveRunForCancelledStatus =
       existing.status !== "cancelled" && updateFields.status === "cancelled";
     if (resumeRequested === true && !commentBody) {
@@ -3065,6 +3205,27 @@ export function issueRoutes(
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
+    }
+
+    const createdDeliveryProofs = [];
+    if (requestedDeliveryProofs.length > 0) {
+      for (const proofInput of requestedDeliveryProofs) {
+        const proof = await deliveryProofsSvc.createForIssue(issue.id, issue.companyId, proofInput);
+        if (proof) createdDeliveryProofs.push(proof);
+      }
+      for (const proof of createdDeliveryProofs) {
+        await logActivity(db, {
+          companyId: issue.companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.delivery_proof_created",
+          entityType: "issue",
+          entityId: issue.id,
+          details: { deliveryProofId: proof.id, name: proof.name, surface: proof.surface, source: "issue_update" },
+        });
+      }
     }
 
     let cancelledStatusRunId: string | null = null;
@@ -3655,7 +3816,15 @@ export function issueRoutes(
       }
     })();
 
-    res.json({ ...issueResponse, comment });
+    const responseDeliveryProofCount =
+      existingDeliveryProofCount + createdDeliveryProofs.length;
+    res.json({
+      ...issueResponse,
+      ...(createdDeliveryProofs.length > 0 ? { deliveryProofs: createdDeliveryProofs } : {}),
+      deliveryProofCount: responseDeliveryProofCount,
+      missingDeliveryProof: issue.status === "done" && responseDeliveryProofCount === 0,
+      comment,
+    });
   });
 
   router.delete("/issues/:id", async (req, res) => {

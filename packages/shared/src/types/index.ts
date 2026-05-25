@@ -143,6 +143,10 @@ export type {
   IssueWorkProductReviewState,
 } from "./work-product.js";
 export type {
+  IssueDeliveryProof,
+} from "./delivery-proof.js";
+
+export type {
   Issue,
   IssueWorkMode,
   IssueAssigneeAdapterOverrides,

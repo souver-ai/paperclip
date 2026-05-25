@@ -737,11 +737,14 @@ describe("NewIssueDialog", () => {
     expect(container.textContent).not.toContain("will no longer use the parent issue workspace");
 
     const selects = Array.from(container.querySelectorAll("select"));
-    const modeSelect = selects[0] as HTMLSelectElement | undefined;
+    const modeSelect = selects.find((select) =>
+      Array.from(select.options).some((option) => option.value === "reuse_existing"),
+    ) as HTMLSelectElement | undefined;
     expect(modeSelect).not.toBeUndefined();
 
     await act(async () => {
-      modeSelect!.value = "shared_workspace";
+      const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+      valueSetter?.call(modeSelect, "shared_workspace");
       modeSelect!.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await flush();

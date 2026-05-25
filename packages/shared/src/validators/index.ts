@@ -148,11 +148,21 @@ export {
 } from "./project.js";
 
 export {
+  createIssueDeliveryProofSchema,
+  updateIssueDeliveryProofSchema,
+  issueDeliveryProofSurfaceSchema,
+  type CreateIssueDeliveryProof,
+  type UpdateIssueDeliveryProof,
+} from "./delivery-proof.js";
+
+export {
   createIssueSchema,
   createIssueInputSchema,
   createChildIssueSchema,
   resolveCreateIssueStatusDefault,
   createIssueLabelSchema,
+  issueCategorySchema,
+  issueSurfaceSchema,
   issueBlockedInboxAttentionSchema,
   issueBlockedInboxIssueRefSchema,
   issueBlockedInboxReasonSchema,

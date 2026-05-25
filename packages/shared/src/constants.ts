@@ -149,6 +149,34 @@ export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 export const ISSUE_WORK_MODES = ["standard", "planning"] as const;
 export type IssueWorkMode = (typeof ISSUE_WORK_MODES)[number];
+export const ISSUE_CATEGORIES = [
+  "feature",
+  "process",
+  "bugfix",
+  "test_review",
+  "security_audit",
+  "harness_benchmark",
+  "architecture_review",
+  "kb_docs",
+  "ops",
+  "approval",
+  "research",
+  "acquisition",
+  "funding",
+  "uncategorized",
+] as const;
+export type IssueCategory = (typeof ISSUE_CATEGORIES)[number];
+export const ISSUE_SURFACES = [
+  "paperclip",
+  "dashboard",
+  "app_cli",
+  "desktop",
+  "inference",
+  "souver_research",
+  "parent_kb_ops",
+  "external",
+] as const;
+export type IssueSurface = (typeof ISSUE_SURFACES)[number];
 export const MAX_ISSUE_REQUEST_DEPTH = 1024;
 
 export const ISSUE_COMMENT_AUTHOR_TYPES = ["user", "agent", "system"] as const;

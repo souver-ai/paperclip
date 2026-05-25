@@ -10,6 +10,7 @@ import {
 import { cn } from "../lib/utils";
 import { deriveActiveRecoveryDisplayState, RECOVERY_CHIP_DEFAULT_TONE } from "../lib/recovery-display";
 import { StatusIcon } from "./StatusIcon";
+import { IssueTaxonomyChips } from "./IssueTaxonomyChips";
 import { productivityReviewTriggerLabel } from "./ProductivityReviewBadge";
 import { hasAssignedBacklogBlocker } from "../lib/issue-blockers";
 
@@ -105,6 +106,14 @@ export function IssueRow({
       Blocked by parked work
     </span>
   ) : null;
+  const deliveryProofIndicator = issue.missingDeliveryProof ? (
+    <span
+      className="ml-1.5 inline-flex shrink-0 items-center rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300"
+      title="This delivered issue has no recorded delivery proof."
+    >
+      Missing proof
+    </span>
+  ) : null;
 
   return (
     <Link
@@ -133,6 +142,8 @@ export function IssueRow({
       <span className="flex min-w-0 flex-1 flex-col gap-1 sm:contents">
         <span className={cn("line-clamp-2 text-sm sm:order-2 sm:min-w-0 sm:flex-1 sm:truncate sm:line-clamp-none", titleClassName)}>
           {issue.title}{titleSuffix}
+          <IssueTaxonomyChips category={issue.category} surfaces={issue.surfaces} compact className="ml-2 align-middle" />
+          {deliveryProofIndicator}
         </span>
         {checklistDependencyChips ? (
           <span className="flex flex-wrap gap-1 sm:order-3 sm:ml-[calc(theme(spacing.3)+theme(spacing.2))]">

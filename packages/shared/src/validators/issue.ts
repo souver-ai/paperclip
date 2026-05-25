@@ -14,6 +14,8 @@ import {
   ISSUE_COMMENT_PRESENTATION_TONES,
   ISSUE_MONITOR_SCHEDULED_BY,
   ISSUE_PRIORITIES,
+  ISSUE_CATEGORIES,
+  ISSUE_SURFACES,
   ISSUE_RECOVERY_ACTION_KINDS,
   ISSUE_RECOVERY_ACTION_OUTCOMES,
   ISSUE_RECOVERY_ACTION_OWNER_TYPES,
@@ -26,6 +28,7 @@ import {
   ISSUE_THREAD_INTERACTION_STATUSES,
   MODEL_PROFILE_KEYS,
 } from "../constants.js";
+import { createIssueDeliveryProofSchema } from "./delivery-proof.js";
 import { multilineTextSchema } from "./text.js";
 
 export const issueBlockedInboxStateSchema = z.enum([
@@ -220,6 +223,9 @@ export const issueReviewRequestSchema = z.object({
   instructions: z.string().trim().min(1).max(20000),
 }).strict();
 
+export const issueCategorySchema = z.enum(ISSUE_CATEGORIES);
+export const issueSurfaceSchema = z.enum(ISSUE_SURFACES);
+
 export const issueExecutionStateSchema = z.object({
   status: z.enum(ISSUE_EXECUTION_STATE_STATUSES),
   currentStageId: z.string().uuid().nullable(),
@@ -375,6 +381,8 @@ const createIssueBaseSchema = z.object({
   description: multilineTextSchema.optional().nullable(),
   status: z.enum(ISSUE_STATUSES),
   workMode: z.enum(ISSUE_WORK_MODES).optional().default("standard"),
+  category: issueCategorySchema.optional().default("uncategorized"),
+  surfaces: z.array(issueSurfaceSchema).optional().default([]),
   priority: z.enum(ISSUE_PRIORITIES).optional().default("medium"),
   assigneeAgentId: z.string().uuid().optional().nullable(),
   assigneeUserId: z.string().optional().nullable(),
@@ -420,6 +428,7 @@ export const updateIssueSchema = createIssueBaseSchema.partial().extend({
   assigneeAgentId: z.string().trim().min(1).optional().nullable(),
   comment: multilineTextSchema.pipe(z.string().min(1)).optional(),
   reviewRequest: issueReviewRequestSchema.optional().nullable(),
+  deliveryProofs: z.array(createIssueDeliveryProofSchema).max(20).optional(),
   reopen: z.boolean().optional(),
   resume: z.boolean().optional(),
   interrupt: z.boolean().optional(),
