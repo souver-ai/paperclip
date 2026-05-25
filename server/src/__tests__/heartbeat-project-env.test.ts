@@ -3,8 +3,62 @@ import { buildSkillMentionHref } from "@paperclipai/shared";
 import {
   applyRunScopedMentionedSkillKeys,
   extractMentionedSkillIdsFromSources,
+  mergeModelProfileAdapterConfig,
   resolveExecutionRunAdapterConfig,
 } from "../services/heartbeat.ts";
+
+describe("mergeModelProfileAdapterConfig", () => {
+  it("preserves base env bindings when model profile and issue overrides add env", () => {
+    const merged = mergeModelProfileAdapterConfig({
+      baseConfig: {
+        model: "gpt-5.4",
+        env: {
+          OPENROUTER_API_KEY: {
+            type: "secret_ref",
+            secretId: "secret-openrouter",
+            version: "latest",
+          },
+          SHARED: { type: "plain", value: "base" },
+        },
+      },
+      modelProfile: {
+        requested: "cheap",
+        requestedBy: "issue_override",
+        applied: "cheap",
+        configSource: "agent_runtime",
+        fallbackReason: null,
+        adapterConfig: {
+          model: "openrouter/qwen-3.6",
+          env: {
+            SHARED: { type: "plain", value: "profile" },
+            PROFILE_ONLY: { type: "plain", value: "enabled" },
+          },
+        },
+      },
+      issueAdapterConfig: {
+        timeoutSec: 120,
+        env: {
+          ISSUE_ONLY: { type: "plain", value: "enabled" },
+        },
+      },
+    });
+
+    expect(merged).toMatchObject({
+      model: "openrouter/qwen-3.6",
+      timeoutSec: 120,
+      env: {
+        OPENROUTER_API_KEY: {
+          type: "secret_ref",
+          secretId: "secret-openrouter",
+          version: "latest",
+        },
+        SHARED: { type: "plain", value: "profile" },
+        PROFILE_ONLY: { type: "plain", value: "enabled" },
+        ISSUE_ONLY: { type: "plain", value: "enabled" },
+      },
+    });
+  });
+});
 
 describe("resolveExecutionRunAdapterConfig", () => {
   it("overlays project env on top of agent env and unions secret keys", async () => {

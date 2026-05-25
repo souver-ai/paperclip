@@ -1143,11 +1143,20 @@ export function mergeModelProfileAdapterConfig(input: {
   modelProfile: ModelProfileApplication;
   issueAdapterConfig: Record<string, unknown> | null | undefined;
 }): Record<string, unknown> {
-  return {
+  const merged = {
     ...input.baseConfig,
     ...(input.modelProfile.adapterConfig ?? {}),
     ...(input.issueAdapterConfig ?? {}),
   };
+  const env = {
+    ...parseObject(input.baseConfig.env),
+    ...parseObject(input.modelProfile.adapterConfig?.env),
+    ...parseObject(input.issueAdapterConfig?.env),
+  };
+  if (Object.keys(env).length > 0) {
+    merged.env = env;
+  }
+  return merged;
 }
 
 function modelProfileRunMetadata(
