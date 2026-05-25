@@ -50,7 +50,13 @@ import {
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
-import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
+import {
+  assertBoard,
+  assertBoardOrgAccess,
+  assertCompanyAccess,
+  assertInstanceAdmin,
+  getActorInfo,
+} from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectAgentAdapterWorkspaceCommandPaths,
@@ -2338,10 +2344,6 @@ export function agentRoutes(
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {
-    if (req.actor.type !== "board") {
-      throw forbidden("Only board-authenticated callers can manage instructions path or bundle configuration");
-    }
-
     const id = req.params.id as string;
     const existing = await svc.getById(id);
     if (!existing) {
@@ -2349,7 +2351,24 @@ export function agentRoutes(
       return;
     }
 
-    await assertCanManageInstructionsPath(req, existing);
+    assertCompanyAccess(req, existing.companyId);
+    if (req.actor.type === "board") {
+      assertBoardOrgAccess(req);
+    } else if (req.actor.type === "agent") {
+      const actorAgentId = req.actor.agentId ?? null;
+      if (!actorAgentId || req.actor.companyId !== existing.companyId) {
+        throw forbidden("Agent can only update instructions path for agents in the same company");
+      }
+      if (actorAgentId !== existing.id) {
+        const chainOfCommand = await svc.getChainOfCommand(existing.id);
+        const isDirectOrIndirectManager = chainOfCommand.some((agent) => agent.id === actorAgentId);
+        if (!isDirectOrIndirectManager) {
+          throw forbidden("Only ancestor managers can update instructions path for another agent");
+        }
+      }
+    } else {
+      throw forbidden("Only board or agent callers can manage instructions path or bundle configuration");
+    }
 
     const existingAdapterConfig = asRecord(existing.adapterConfig) ?? {};
     const explicitKey = asNonEmptyString(req.body.adapterConfigKey);
