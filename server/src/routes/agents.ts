@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
@@ -49,6 +50,7 @@ import {
   workspaceOperationService,
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -1070,6 +1072,83 @@ export function agentRoutes(
       throw unprocessable("adapterConfig.cwd must be an absolute path to resolve relative instructions path");
     }
     return path.resolve(cwd, trimmed);
+  }
+
+  function isPathWithinResolvedRoot(resolvedRoot: string, resolvedCandidate: string) {
+    const relativePath = path.relative(resolvedRoot, resolvedCandidate);
+    return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+  }
+
+  async function resolveExistingRealPath(candidatePath: string) {
+    let currentPath = path.resolve(candidatePath);
+    let missingSuffix = "";
+    while (true) {
+      try {
+        const realPath = await fs.realpath(currentPath);
+        return path.resolve(realPath, missingSuffix);
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") {
+          throw err;
+        }
+        const parent = path.dirname(currentPath);
+        if (parent === currentPath) {
+          throw unprocessable("Instructions path does not have an existing parent directory");
+        }
+        missingSuffix = path.join(path.basename(currentPath), missingSuffix);
+        currentPath = parent;
+      }
+    }
+  }
+
+  async function isPathWithinCanonicalRoot(rootPath: string, candidatePath: string) {
+    try {
+      const resolvedRoot = await fs.realpath(rootPath);
+      const resolvedCandidate = await resolveExistingRealPath(candidatePath);
+      return isPathWithinResolvedRoot(resolvedRoot, resolvedCandidate);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  function resolveManagedInstructionsRoot(agent: { id: string; companyId: string }) {
+    return path.resolve(
+      resolvePaperclipInstanceRoot(),
+      "companies",
+      agent.companyId,
+      "agents",
+      agent.id,
+      "instructions",
+    );
+  }
+
+  async function assertAgentWritableInstructionsFilePath(
+    resolvedPath: string,
+    agent: { id: string; companyId: string },
+    adapterConfig: Record<string, unknown>,
+  ) {
+    const basename = path.basename(resolvedPath);
+    if (basename === ".env" || basename.startsWith(".env.") || basename === ".paperclip.env") {
+      throw unprocessable("Agent-authenticated instructions path cannot point to sensitive environment files");
+    }
+
+    const safeRoots = [resolveManagedInstructionsRoot(agent)];
+    const cwd = asNonEmptyString(adapterConfig.cwd);
+    if (cwd && path.isAbsolute(cwd)) {
+      safeRoots.push(cwd);
+    }
+
+    for (const rootPath of safeRoots) {
+      if (await isPathWithinCanonicalRoot(rootPath, resolvedPath)) return;
+    }
+
+    throw unprocessable(
+      "Agent-authenticated instructions path must stay under the managed instructions root or adapterConfig.cwd",
+    );
   }
 
   async function materializeDefaultInstructionsBundleForNewAgent<T extends {
@@ -2383,7 +2462,11 @@ export function agentRoutes(
     if (req.body.path === null) {
       delete nextAdapterConfig[adapterConfigKey];
     } else {
-      nextAdapterConfig[adapterConfigKey] = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      const resolvedPath = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      if (req.actor.type !== "board") {
+        await assertAgentWritableInstructionsFilePath(resolvedPath, existing, existingAdapterConfig);
+      }
+      nextAdapterConfig[adapterConfigKey] = resolvedPath;
     }
 
     const syncedAdapterConfig = syncInstructionsBundleConfigFromFilePath(existing, nextAdapterConfig);

@@ -1,4 +1,7 @@
 import express from "express";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_OPENCODE_LOCAL_MODEL } from "@paperclipai/adapter-opencode-local";
@@ -51,6 +54,7 @@ const mockAgentService = vi.hoisted(() => ({
 
 const mockAccessService = vi.hoisted(() => ({
   canUser: vi.fn(),
+  decide: vi.fn(),
   hasPermission: vi.fn(),
   getMembership: vi.fn(),
   ensureMembership: vi.fn(),
@@ -302,6 +306,7 @@ describe.sequential("agent permission routes", () => {
     mockAgentService.getChainOfCommand.mockReset();
     mockAgentService.resolveByReference.mockReset();
     mockAccessService.canUser.mockReset();
+    mockAccessService.decide.mockReset();
     mockAccessService.hasPermission.mockReset();
     mockAccessService.getMembership.mockReset();
     mockAccessService.ensureMembership.mockReset();
@@ -342,6 +347,7 @@ describe.sequential("agent permission routes", () => {
     mockAgentService.update.mockResolvedValue(baseAgent);
     mockAgentService.updatePermissions.mockResolvedValue(baseAgent);
     mockAccessService.canUser.mockResolvedValue(true);
+    mockAccessService.decide.mockResolvedValue({ allowed: true });
     mockAccessService.hasPermission.mockResolvedValue(false);
     mockAccessService.getMembership.mockResolvedValue({
       id: "membership-1",
@@ -770,6 +776,14 @@ describe.sequential("agent permission routes", () => {
   }, 15_000);
 
   it("allows agent-authenticated self instructions-path updates through the dedicated route", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-agent-cwd-"));
+    const instructionsPath = path.join(cwd, "AGENTS.md");
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        cwd,
+      },
+    });
     const app = await createApp({
       type: "agent",
       agentId,
@@ -780,20 +794,22 @@ describe.sequential("agent permission routes", () => {
     mockAgentService.update.mockResolvedValue({
       ...baseAgent,
       adapterConfig: {
-        instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+        cwd,
+        instructionsFilePath: instructionsPath,
       },
     });
 
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
       .patch(`/api/agents/${agentId}/instructions-path`)
-      .send({ path: "/tmp/agents/builder/AGENTS.md", adapterConfigKey: "instructionsFilePath" }));
+      .send({ path: instructionsPath, adapterConfigKey: "instructionsFilePath" }));
 
     expect(res.status).toBe(200);
     expect(mockAgentService.update).toHaveBeenCalledWith(
       agentId,
       {
         adapterConfig: {
-          instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+          cwd,
+          instructionsFilePath: instructionsPath,
         },
       },
       expect.objectContaining({
@@ -808,7 +824,7 @@ describe.sequential("agent permission routes", () => {
       agentId,
       adapterType: "process",
       adapterConfigKey: "instructionsFilePath",
-      path: "/tmp/agents/builder/AGENTS.md",
+      path: instructionsPath,
     });
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -822,11 +838,133 @@ describe.sequential("agent permission routes", () => {
     );
   });
 
+  it.each([
+    ["outside", (cwd: string, other: string) => path.join(other, "AGENTS.md")],
+    [".env", (cwd: string) => path.join(cwd, ".env")],
+    [".env.local", (cwd: string) => path.join(cwd, ".env.local")],
+    [".paperclip.env", (cwd: string) => path.join(cwd, ".paperclip.env")],
+  ])("blocks agent-authenticated self instructions-path updates to unsafe host paths (%s)", async (_label, buildUnsafePath) => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-agent-cwd-"));
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-other-cwd-"));
+    const unsafePath = buildUnsafePath(cwd, other);
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        cwd,
+      },
+    });
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: unsafePath, adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(422);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("blocks agent-authenticated instructions-path updates through symlinks escaping cwd", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-agent-cwd-"));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-outside-cwd-"));
+    await fs.writeFile(path.join(outside, "AGENTS.md"), "external instructions\n");
+    await fs.symlink(outside, path.join(cwd, "linked-outside"));
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        cwd,
+      },
+    });
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({
+        path: path.join(cwd, "linked-outside", "AGENTS.md"),
+        adapterConfigKey: "instructionsFilePath",
+      }));
+
+    expect(res.status).toBe(422);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("preserves board-authenticated absolute instructions-path updates", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+    mockAgentService.update.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        instructionsFilePath: "/etc/passwd",
+      },
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/etc/passwd", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      agentId,
+      {
+        adapterConfig: {
+          instructionsFilePath: "/etc/passwd",
+        },
+      },
+      expect.anything(),
+    );
+  });
+
+  it("blocks board users without agent-management permission from setting instructions paths", async () => {
+    mockAccessService.decide.mockResolvedValueOnce({
+      allowed: false,
+      explanation: "Missing agents:create permission",
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "session",
+      isInstanceAdmin: false,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/etc/passwd", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("agents:create");
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
   it("allows ancestor managers to update a report's instructions path through the dedicated route", async () => {
     const managerId = "33333333-3333-4333-8333-333333333333";
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-agent-cwd-"));
+    const instructionsPath = path.join(cwd, "AGENTS.md");
     mockAgentService.getById.mockResolvedValue({
       ...baseAgent,
       reportsTo: managerId,
+      adapterConfig: {
+        cwd,
+      },
     });
     mockAgentService.getChainOfCommand.mockResolvedValue([
       { id: managerId, name: "CTO", role: "cto", title: "CTO" },
@@ -835,7 +973,8 @@ describe.sequential("agent permission routes", () => {
       ...baseAgent,
       reportsTo: managerId,
       adapterConfig: {
-        instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+        cwd,
+        instructionsFilePath: instructionsPath,
       },
     });
     const app = await createApp({
@@ -848,14 +987,15 @@ describe.sequential("agent permission routes", () => {
 
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
       .patch(`/api/agents/${agentId}/instructions-path`)
-      .send({ path: "/tmp/agents/builder/AGENTS.md", adapterConfigKey: "instructionsFilePath" }));
+      .send({ path: instructionsPath, adapterConfigKey: "instructionsFilePath" }));
 
     expect(res.status).toBe(200);
     expect(mockAgentService.update).toHaveBeenCalledWith(
       agentId,
       {
         adapterConfig: {
-          instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
+          cwd,
+          instructionsFilePath: instructionsPath,
         },
       },
       expect.objectContaining({
@@ -866,6 +1006,37 @@ describe.sequential("agent permission routes", () => {
         }),
       }),
     );
+  });
+
+  it("blocks ancestor managers from setting a report's instructions path outside safe roots", async () => {
+    const managerId = "33333333-3333-4333-8333-333333333333";
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-agent-cwd-"));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-other-cwd-"));
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      reportsTo: managerId,
+      adapterConfig: {
+        cwd,
+      },
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerId, name: "CTO", role: "cto", title: "CTO" },
+    ]);
+    const app = await createApp({
+      type: "agent",
+      agentId: managerId,
+      companyId,
+      source: "agent_key",
+      runId: "run-manager",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: path.join(outside, "AGENTS.md"), adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(422);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("blocks unrelated agent-authenticated instructions-path updates", async () => {
