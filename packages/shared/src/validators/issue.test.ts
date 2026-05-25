@@ -219,6 +219,42 @@ describe("issue validators", () => {
     }).workMode).toBe("planning");
   });
 
+  it("defaults issue taxonomy and accepts valid surfaces", () => {
+    const parsed = createIssueSchema.parse({
+      title: "Add desktop feature",
+      category: "feature",
+      surfaces: ["desktop", "app_cli"],
+    });
+
+    expect(parsed.category).toBe("feature");
+    expect(parsed.surfaces).toEqual(["desktop", "app_cli"]);
+    expect(createIssueSchema.parse({ title: "Classify later" }).category).toBe("uncategorized");
+  });
+
+  it("rejects invalid issue taxonomy values", () => {
+    expect(createIssueSchema.safeParse({
+      title: "Bad taxonomy",
+      category: "feature-ish",
+    }).success).toBe(false);
+
+    expect(updateIssueSchema.safeParse({
+      surfaces: ["desktop", "unknown_surface"],
+    }).success).toBe(false);
+  });
+
+  it("accepts delivery proofs on done updates", () => {
+    const parsed = updateIssueSchema.parse({
+      status: "done",
+      deliveryProofs: [{
+        name: "Issue taxonomy filters",
+        command: "pnpm vitest run ui/src/lib/issue-filters.test.ts",
+        surface: "paperclip",
+      }],
+    });
+
+    expect(parsed.deliveryProofs?.[0]?.name).toBe("Issue taxonomy filters");
+  });
+
   it("validates blocked inbox attention payloads and requires redacted secret fields", () => {
     const parsed = issueBlockedInboxAttentionSchema.parse({
       kind: "blocked",

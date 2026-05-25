@@ -30,6 +30,14 @@ vi.mock("../services/index.js", () => ({
   companyService: () => ({
     getById: vi.fn(async () => ({ id: "company-1", attachmentMaxBytes: 10 * 1024 * 1024 })),
   }),
+  deliveryProofService: () => ({
+    countForIssues: vi.fn(async () => new Map()),
+    createForIssue: vi.fn(),
+    getById: vi.fn(),
+    listForIssue: vi.fn(async () => []),
+    remove: vi.fn(),
+    update: vi.fn(),
+  }),
   documentService: () => ({
     getIssueDocumentPayload: vi.fn(async () => ({})),
   }),

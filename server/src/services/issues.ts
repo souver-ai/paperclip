@@ -225,6 +225,8 @@ export interface IssueFilters {
   parentId?: string;
   descendantOf?: string;
   labelId?: string;
+  category?: string;
+  surface?: string;
   originKind?: string;
   originKindPrefix?: string;
   originId?: string;
@@ -236,6 +238,19 @@ export interface IssueFilters {
   q?: string;
   limit?: number;
   offset?: number;
+}
+
+function parseCommaSeparatedFilter(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+function issueSurfacesCondition(surfaceFilter: string | undefined) {
+  const surfaceValues = parseCommaSeparatedFilter(surfaceFilter);
+  if (surfaceValues.length === 0) return null;
+  const conditions = surfaceValues.map((surface) =>
+    sql<boolean>`${issues.surfaces} @> ${JSON.stringify([surface])}::jsonb`,
+  );
+  return conditions.length === 1 ? conditions[0]! : or(...conditions);
 }
 
 type IssueRow = typeof issues.$inferSelect;
@@ -1556,6 +1571,8 @@ const issueListSelect = {
   `,
   status: issues.status,
   workMode: issues.workMode,
+  category: issues.category,
+  surfaces: issues.surfaces,
   priority: issues.priority,
   assigneeAgentId: issues.assigneeAgentId,
   assigneeUserId: issues.assigneeUserId,
@@ -2524,6 +2541,9 @@ async function blockedInboxIssueConditions(
   if (inboxArchivedByUserId) conditions.push(inboxVisibleForUserCondition(companyId, inboxArchivedByUserId));
   if (unreadForUserId) conditions.push(unreadForUserCondition(companyId, unreadForUserId));
   if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
+  if (filters?.category) conditions.push(eq(issues.category, filters.category));
+  const surfaceCondition = issueSurfacesCondition(filters?.surface);
+  if (surfaceCondition) conditions.push(surfaceCondition);
   if (filters?.workspaceId) {
     conditions.push(or(
       eq(issues.executionWorkspaceId, filters.workspaceId),
@@ -3467,6 +3487,9 @@ export function issueService(db: Db) {
         conditions.push(unreadForUserCondition(companyId, unreadForUserId));
       }
       if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
+      if (filters?.category) conditions.push(eq(issues.category, filters.category));
+      const surfaceCondition = issueSurfacesCondition(filters?.surface);
+      if (surfaceCondition) conditions.push(surfaceCondition);
       if (filters?.workspaceId) {
         conditions.push(or(
           eq(issues.executionWorkspaceId, filters.workspaceId),
@@ -3633,6 +3656,9 @@ export function issueService(db: Db) {
       if (filters?.assigneeAgentId) conditions.push(eq(issues.assigneeAgentId, filters.assigneeAgentId));
       if (filters?.assigneeUserId) conditions.push(eq(issues.assigneeUserId, filters.assigneeUserId));
       if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
+      if (filters?.category) conditions.push(eq(issues.category, filters.category));
+      const surfaceCondition = issueSurfacesCondition(filters?.surface);
+      if (surfaceCondition) conditions.push(surfaceCondition);
       if (filters?.workspaceId) {
         conditions.push(or(
           eq(issues.executionWorkspaceId, filters.workspaceId),

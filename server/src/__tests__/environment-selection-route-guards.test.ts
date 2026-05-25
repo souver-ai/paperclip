@@ -46,6 +46,15 @@ const mockIssueReferenceService = vi.hoisted(() => ({
   syncIssue: vi.fn(async () => undefined),
 }));
 
+const mockDeliveryProofService = vi.hoisted(() => ({
+  countForIssues: vi.fn(async () => new Map()),
+  createForIssue: vi.fn(),
+  getById: vi.fn(),
+  listForIssue: vi.fn(async () => []),
+  remove: vi.fn(),
+  update: vi.fn(),
+}));
+
 const mockSecretService = vi.hoisted(() => ({
   normalizeEnvBindingsForPersistence: vi.fn(async (_companyId: string, env: Record<string, unknown>) => env),
 }));
@@ -84,6 +93,7 @@ vi.mock("../services/index.js", () => ({
     getActiveForIssue: vi.fn(async () => null),
     listActiveForIssues: vi.fn(async () => new Map()),
   }),
+  deliveryProofService: () => mockDeliveryProofService,
   documentService: () => ({}),
   routineService: () => ({}),
   workProductService: () => ({}),
@@ -178,6 +188,12 @@ describe.sequential("execution environment route guards", () => {
     mockIssueReferenceService.emptySummary.mockClear();
     mockIssueReferenceService.listIssueReferenceSummary.mockClear();
     mockIssueReferenceService.syncComment.mockClear();
+    mockDeliveryProofService.countForIssues.mockClear();
+    mockDeliveryProofService.createForIssue.mockClear();
+    mockDeliveryProofService.getById.mockClear();
+    mockDeliveryProofService.listForIssue.mockClear();
+    mockDeliveryProofService.remove.mockClear();
+    mockDeliveryProofService.update.mockClear();
     mockIssueReferenceService.syncDocument.mockClear();
     mockIssueReferenceService.syncIssue.mockClear();
     mockSecretService.normalizeEnvBindingsForPersistence.mockClear();

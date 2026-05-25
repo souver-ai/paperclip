@@ -17,6 +17,7 @@ import {
   toggleIssueFilterValue,
   type IssueFilterState,
 } from "../lib/issue-filters";
+import { issueCategoryOptions, issueSurfaceOptions } from "../lib/issue-taxonomy";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 
 type AgentOption = {
@@ -200,6 +201,21 @@ export function IssueFiltersPopover({
                   ))}
                 </div>
               </div>
+
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Category</span>
+                <div className="max-h-32 space-y-0.5 overflow-y-auto">
+                  {issueCategoryOptions.map((category) => (
+                    <label key={category.value} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
+                      <Checkbox
+                        checked={(state.categories ?? []).includes(category.value)}
+                        onCheckedChange={() => onChange({ categories: toggleIssueFilterValue(state.categories ?? [], category.value) })}
+                      />
+                      <span className="text-sm">{category.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div className="min-w-0 space-y-3">
@@ -308,6 +324,21 @@ export function IssueFiltersPopover({
             </div>
 
             <div className="min-w-0 space-y-3">
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Surface</span>
+                <div className="max-h-32 space-y-0.5 overflow-y-auto">
+                  {issueSurfaceOptions.map((surface) => (
+                    <label key={surface.value} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
+                      <Checkbox
+                        checked={(state.surfaces ?? []).includes(surface.value)}
+                        onCheckedChange={() => onChange({ surfaces: toggleIssueFilterValue(state.surfaces ?? [], surface.value) })}
+                      />
+                      <span className="text-sm">{surface.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
               {labels && labels.length > 0 ? (
                 <div className="space-y-1">
                   <span className="text-xs text-muted-foreground">Labels</span>

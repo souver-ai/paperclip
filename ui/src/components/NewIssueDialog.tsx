@@ -20,6 +20,7 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { buildExecutionPolicy } from "../lib/issue-execution-policy";
+import { issueCategoryOptions, issueSurfaceOptions, labelTaxonomyValue } from "../lib/issue-taxonomy";
 import { useToastActions } from "../context/ToastContext";
 import {
   assigneeValueFromSelection,
@@ -31,6 +32,7 @@ import {
   DialogContent,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import {
   Popover,
@@ -87,6 +89,8 @@ interface IssueDraft {
   assigneeModelOverride: string;
   assigneeThinkingEffort: string;
   assigneeChrome: boolean;
+  category?: string;
+  surfaces?: string[];
   executionWorkspaceMode?: string;
   selectedExecutionWorkspaceId?: string;
   useIsolatedExecutionWorkspace?: boolean;
@@ -421,6 +425,8 @@ export function NewIssueDialog() {
   const [participantMenuOpen, setParticipantMenuOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
+  const [category, setCategory] = useState("uncategorized");
+  const [surfaces, setSurfaces] = useState<string[]>([]);
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
   const [assigneeModelLane, setAssigneeModelLane] = useState<IssueModelLane>("primary");
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
@@ -654,6 +660,8 @@ export function NewIssueDialog() {
       assigneeModelOverride,
       assigneeThinkingEffort,
       assigneeChrome,
+      category,
+      surfaces,
       executionWorkspaceMode,
       selectedExecutionWorkspaceId,
       workMode,
@@ -671,6 +679,8 @@ export function NewIssueDialog() {
     assigneeModelOverride,
     assigneeThinkingEffort,
     assigneeChrome,
+    category,
+    surfaces,
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
     workMode,
@@ -708,6 +718,8 @@ export function NewIssueDialog() {
     assigneeModelOverride,
     assigneeThinkingEffort,
     assigneeChrome,
+    category,
+    surfaces,
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
     workMode,
@@ -728,6 +740,12 @@ export function NewIssueDialog() {
     executionWorkspaceDefaultProjectId.current = null;
 
     const draft = loadDraft();
+    const defaultCategory = typeof (newIssueDefaults as { category?: unknown }).category === "string"
+      ? (newIssueDefaults as { category: string }).category
+      : "uncategorized";
+    const defaultSurfaces = Array.isArray((newIssueDefaults as { surfaces?: unknown }).surfaces)
+      ? (newIssueDefaults as { surfaces: string[] }).surfaces.filter((surface) => typeof surface === "string")
+      : [];
     if (newIssueDefaults.parentId) {
       const nextWorkMode = isIssueWorkMode(newIssueDefaults.workMode) ? newIssueDefaults.workMode : "standard";
       const defaultProjectId = newIssueDefaults.projectId ?? "";
@@ -742,6 +760,8 @@ export function NewIssueDialog() {
       setProjectId(defaultProjectId);
       setProjectWorkspaceId(defaultProjectWorkspaceId);
       setAssigneeValue(assigneeValueFromSelection(newIssueDefaults));
+      setCategory(defaultCategory);
+      setSurfaces(defaultSurfaces);
       setAssigneeModelLane("primary");
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
@@ -763,6 +783,8 @@ export function NewIssueDialog() {
       setProjectId(defaultProjectId);
       setProjectWorkspaceId(newIssueDefaults.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(defaultProject));
       setAssigneeValue(assigneeValueFromSelection(newIssueDefaults));
+      setCategory(defaultCategory);
+      setSurfaces(defaultSurfaces);
       setReviewerValue("");
       setApproverValue("");
       setShowReviewerRow(false);
@@ -796,6 +818,8 @@ export function NewIssueDialog() {
       setShowReviewerRow(!!(draft.reviewerValue));
       setShowApproverRow(!!(draft.approverValue));
       setProjectId(restoredProjectId);
+      setCategory(draft.category ?? defaultCategory);
+      setSurfaces(Array.isArray(draft.surfaces) ? draft.surfaces : defaultSurfaces);
       setProjectWorkspaceId(
         hasExplicitProjectWorkspaceId
           ? (newIssueDefaults.projectWorkspaceId ?? "")
@@ -833,6 +857,8 @@ export function NewIssueDialog() {
       setProjectId(defaultProjectId);
       setProjectWorkspaceId(newIssueDefaults.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(defaultProject));
       setAssigneeValue(assigneeValueFromSelection(newIssueDefaults));
+      setCategory(defaultCategory);
+      setSurfaces(defaultSurfaces);
       setReviewerValue("");
       setApproverValue("");
       setShowReviewerRow(false);
@@ -896,6 +922,8 @@ export function NewIssueDialog() {
     setShowApproverRow(false);
     setProjectId("");
     setProjectWorkspaceId("");
+    setCategory("uncategorized");
+    setSurfaces([]);
     setAssigneeOptionsOpen(false);
     setAssigneeModelLane("primary");
     setAssigneeModelOverride("");
@@ -982,6 +1010,8 @@ export function NewIssueDialog() {
       status,
       priority: priority || "medium",
       workMode,
+      category,
+      surfaces,
       ...(selectedAssigneeAgentId ? { assigneeAgentId: selectedAssigneeAgentId } : {}),
       ...(selectedAssigneeUserId ? { assigneeUserId: selectedAssigneeUserId } : {}),
       ...(newIssueDefaults.parentId ? { parentId: newIssueDefaults.parentId } : {}),
@@ -1472,6 +1502,49 @@ export function NewIssueDialog() {
                   </button>
                 </PopoverContent>
               </Popover>
+              </div>
+            </div>
+
+            <div className="mt-2 grid gap-2 rounded-md border border-border bg-muted/20 p-2 sm:grid-cols-[minmax(10rem,14rem)_1fr]">
+              <label className="flex min-w-0 flex-col gap-1">
+                <span className="text-[11px] font-medium text-muted-foreground">Category</span>
+                <select
+                  value={category}
+                  onChange={(event) => setCategory(event.target.value)}
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                  disabled={createIssue.isPending}
+                >
+                  {issueCategoryOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="min-w-0 space-y-1">
+                <span className="text-[11px] font-medium text-muted-foreground">Surfaces</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {issueSurfaceOptions.map((option) => (
+                    <label
+                      key={option.value}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs"
+                      title={`Surface: ${option.label}`}
+                    >
+                      <Checkbox
+                        checked={surfaces.includes(option.value)}
+                        disabled={createIssue.isPending}
+                        onCheckedChange={() => {
+                          setSurfaces((current) =>
+                            current.includes(option.value)
+                              ? current.filter((surface) => surface !== option.value)
+                              : [...current, option.value],
+                          );
+                        }}
+                      />
+                      <span>{labelTaxonomyValue(option.value)}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
 

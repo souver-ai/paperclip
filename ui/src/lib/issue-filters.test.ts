@@ -74,6 +74,28 @@ describe("issue filters", () => {
     })).toBe(1);
   });
 
+  it("filters issues by taxonomy category and surface", () => {
+    const issues = [
+      makeIssue({ id: "desktop-feature", category: "feature", surfaces: ["desktop"] }),
+      makeIssue({ id: "paperclip-process", category: "process", surfaces: ["paperclip"] }),
+      makeIssue({ id: "uncategorized" }),
+    ];
+
+    expect(applyIssueFilters(issues, {
+      ...defaultIssueFilterState,
+      categories: ["feature"],
+      surfaces: ["desktop"],
+    }).map((issue) => issue.id)).toEqual(["desktop-feature"]);
+  });
+
+  it("counts taxonomy filters as active filter groups", () => {
+    expect(countActiveIssueFilters({
+      ...defaultIssueFilterState,
+      categories: ["feature"],
+      surfaces: ["paperclip"],
+    })).toBe(2);
+  });
+
   it("filters issues to live issue ids when live-only is enabled", () => {
     const issues = [
       makeIssue({ id: "live-issue" }),

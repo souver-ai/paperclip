@@ -76,6 +76,7 @@ import { IssueScheduledRetryCard } from "../components/IssueScheduledRetryCard";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueRunLedger } from "../components/IssueRunLedger";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
+import { IssueTaxonomyChips } from "../components/IssueTaxonomyChips";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -106,6 +107,7 @@ import { buildIssuePropertiesPanelKey } from "../lib/issue-properties-panel-key"
 import { buildIssueSiblingNavigation, shouldRenderRichSubIssuesSection } from "../lib/issue-detail-subissues";
 import { filterIssueDescendants } from "../lib/issue-tree";
 import { buildSubIssueDefaultsForViewer } from "../lib/subIssueDefaults";
+import { issueSurfaceOptions, labelTaxonomyValue } from "../lib/issue-taxonomy";
 import {
   SUCCESSFUL_RUN_HANDOFF_ESCALATED_ACTION,
   SUCCESSFUL_RUN_HANDOFF_REQUIRED_ACTION,
@@ -149,6 +151,7 @@ import {
   type Issue,
   type IssueAttachment,
   type IssueComment,
+  type IssueDeliveryProof,
   type IssueWorkMode,
   type IssueThreadInteraction,
   type RequestConfirmationInteraction,
@@ -211,6 +214,145 @@ function treeControlPreviewErrorCopy(error: unknown): string {
     if (error.status === 422) return "This subtree action is currently invalid for the selected issues.";
   }
   return error instanceof Error ? error.message : "Unable to load preview.";
+}
+
+function DeliveryProofsSection({ issue }: { issue: Issue }) {
+  const queryClient = useQueryClient();
+  const { pushToast } = useToastActions();
+  const [name, setName] = useState("");
+  const [command, setCommand] = useState("");
+  const [description, setDescription] = useState("");
+  const [surface, setSurface] = useState("");
+  const proofsQueryKey = ["issues", issue.id, "delivery-proofs"];
+  const { data: loadedProofs } = useQuery({
+    queryKey: proofsQueryKey,
+    queryFn: () => issuesApi.listDeliveryProofs(issue.id),
+    initialData: issue.deliveryProofs,
+  });
+  const proofs = loadedProofs ?? [];
+  const createProof = useMutation({
+    mutationFn: () => issuesApi.createDeliveryProof(issue.id, {
+      name: name.trim(),
+      command: command.trim(),
+      description: description.trim() || null,
+      surface: surface || null,
+    }),
+    onSuccess: async () => {
+      setName("");
+      setCommand("");
+      setDescription("");
+      setSurface("");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: proofsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.id) }),
+      ]);
+      pushToast({ title: "Delivery proof added", tone: "success" });
+    },
+  });
+  const deleteProof = useMutation({
+    mutationFn: (id: string) => issuesApi.deleteDeliveryProof(id),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: proofsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.id) }),
+      ]);
+    },
+  });
+
+  const canCreate = name.trim().length > 0 && command.trim().length > 0 && !createProof.isPending;
+
+  return (
+    <section className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium">Delivery proofs</h3>
+          {issue.status === "done" && proofs.length === 0 ? (
+            <p className="text-xs text-rose-600 dark:text-rose-300">Delivered without a recorded proof.</p>
+          ) : null}
+        </div>
+      </div>
+      {proofs.length > 0 ? (
+        <div className="space-y-2">
+          {proofs.map((proof: IssueDeliveryProof) => (
+            <div key={proof.id} className="rounded-md border border-border bg-background p-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-sm font-medium">{proof.name}</span>
+                    {proof.surface ? (
+                      <span className="rounded border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                        {labelTaxonomyValue(proof.surface)}
+                      </span>
+                    ) : null}
+                  </div>
+                  {proof.description ? <p className="mt-1 text-xs text-muted-foreground">{proof.description}</p> : null}
+                  <code className="mt-1 block overflow-x-auto rounded bg-muted px-2 py-1 text-xs">{proof.command}</code>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    title="Copy command"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(proof.command);
+                      pushToast({ title: "Command copied", tone: "success" });
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    title="Delete proof"
+                    disabled={deleteProof.isPending}
+                    onClick={() => deleteProof.mutate(proof.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_10rem_auto]">
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Proof name"
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+        />
+        <input
+          value={command}
+          onChange={(event) => setCommand(event.target.value)}
+          placeholder="Command to run"
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+        />
+        <select
+          value={surface}
+          onChange={(event) => setSurface(event.target.value)}
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+        >
+          <option value="">No surface</option>
+          {issueSurfaceOptions.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+        <Button type="button" size="sm" disabled={!canCreate} onClick={() => createProof.mutate()}>
+          <Plus className="mr-1 h-3.5 w-3.5" />
+          Add
+        </Button>
+      </div>
+      <Textarea
+        value={description}
+        onChange={(event) => setDescription(event.target.value)}
+        placeholder="Optional proof notes"
+        className="min-h-16 text-xs"
+      />
+    </section>
+  );
 }
 
 export function canBoardResolveRecoveryAction(
@@ -1918,6 +2060,18 @@ export function IssueDetail() {
     updateIssue.mutate(data);
   }, [updateIssue.mutate]);
 
+  const handleStatusChange = useCallback((status: string) => {
+    if (status === "done" && issue?.status !== "done" && (issue?.deliveryProofCount ?? issue?.deliveryProofs?.length ?? 0) === 0) {
+      pushToast({
+        title: "Delivery proof required",
+        body: "Add at least one delivery proof with a test name and command before marking this issue done.",
+        tone: "warn",
+      });
+      return;
+    }
+    updateIssue.mutate({ status });
+  }, [issue?.deliveryProofCount, issue?.deliveryProofs?.length, issue?.status, pushToast, updateIssue]);
+
   const updateChildIssue = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) => issuesApi.update(id, data),
     onSuccess: () => {
@@ -3327,13 +3481,19 @@ export function IssueDetail() {
           <StatusIcon
             status={issue.status}
             blockerAttention={issue.blockerAttention}
-            onChange={(status) => updateIssue.mutate({ status })}
+            onChange={handleStatusChange}
           />
           <PriorityIcon
             priority={issue.priority}
             onChange={(priority) => updateIssue.mutate({ priority })}
           />
           <span className="text-sm font-mono text-muted-foreground shrink-0">{issue.identifier ?? issue.id.slice(0, 8)}</span>
+          <IssueTaxonomyChips category={issue.category} surfaces={issue.surfaces} />
+          {issue.missingDeliveryProof ? (
+            <span className="inline-flex shrink-0 items-center rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300">
+              Missing delivery proof
+            </span>
+          ) : null}
 
           {hasLiveRuns && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-medium text-cyan-600 dark:text-cyan-400 shrink-0">
@@ -3874,6 +4034,8 @@ export function IssueDetail() {
         project={resolvedProject}
         onUpdate={(data) => updateIssue.mutate(data)}
       />
+
+      <DeliveryProofsSection issue={issue} />
 
       <Separator />
 

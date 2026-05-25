@@ -27,6 +27,7 @@ import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildExecutionPolicy, stageParticipantValues } from "../lib/issue-execution-policy";
 import { formatMonitorOffset } from "../lib/issue-monitor";
 import { formatRetryReason } from "../lib/runRetryState";
+import { issueCategoryOptions, issueSurfaceOptions } from "../lib/issue-taxonomy";
 import { useRetryNowMutation } from "../hooks/useRetryNowMutation";
 import { RetryErrorBand } from "./IssueScheduledRetryCard";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
@@ -1744,6 +1745,46 @@ export function IssueProperties({
             onChange={(priority) => onUpdate({ priority })}
             showLabel
           />
+        </PropertyRow>
+
+        <PropertyRow label="Category">
+          <select
+            value={issue.category ?? "uncategorized"}
+            onChange={(event) => onUpdate({ category: event.target.value })}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+          >
+            {issueCategoryOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </PropertyRow>
+
+        <PropertyRow label="Surfaces">
+          {issueSurfaceOptions.map((option) => {
+            const selected = (issue.surfaces ?? []).includes(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={cn(
+                  "rounded-md border px-2 py-1 text-xs transition-colors",
+                  selected
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                    : "border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                )}
+                onClick={() => {
+                  const current = issue.surfaces ?? [];
+                  onUpdate({
+                    surfaces: selected
+                      ? current.filter((surface) => surface !== option.value)
+                      : [...current, option.value],
+                  });
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
         </PropertyRow>
 
         <PropertyPicker
