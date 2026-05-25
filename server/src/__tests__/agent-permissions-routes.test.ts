@@ -770,6 +770,12 @@ describe.sequential("agent permission routes", () => {
   }, 15_000);
 
   it("allows agent-authenticated self instructions-path updates through the dedicated route", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+      },
+    });
     const app = await createApp({
       type: "agent",
       agentId,
@@ -780,6 +786,7 @@ describe.sequential("agent permission routes", () => {
     mockAgentService.update.mockResolvedValue({
       ...baseAgent,
       adapterConfig: {
+        cwd: "/tmp/agents/builder",
         instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
       },
     });
@@ -793,6 +800,7 @@ describe.sequential("agent permission routes", () => {
       agentId,
       {
         adapterConfig: {
+          cwd: "/tmp/agents/builder",
           instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
         },
       },
@@ -822,11 +830,75 @@ describe.sequential("agent permission routes", () => {
     );
   });
 
+  it.each([
+    ["/etc/passwd"],
+    ["/tmp/agents/builder/.env"],
+    ["/tmp/agents/builder/.env.local"],
+    ["/tmp/agents/builder/.paperclip.env"],
+    ["/tmp/agents/other/AGENTS.md"],
+  ])("blocks agent-authenticated self instructions-path updates to unsafe host paths (%s)", async (unsafePath) => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+      },
+    });
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: unsafePath, adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(422);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("preserves board-authenticated absolute instructions-path updates", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+    mockAgentService.update.mockResolvedValue({
+      ...baseAgent,
+      adapterConfig: {
+        instructionsFilePath: "/etc/passwd",
+      },
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/etc/passwd", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      agentId,
+      {
+        adapterConfig: {
+          instructionsFilePath: "/etc/passwd",
+        },
+      },
+      expect.anything(),
+    );
+  });
+
   it("allows ancestor managers to update a report's instructions path through the dedicated route", async () => {
     const managerId = "33333333-3333-4333-8333-333333333333";
     mockAgentService.getById.mockResolvedValue({
       ...baseAgent,
       reportsTo: managerId,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+      },
     });
     mockAgentService.getChainOfCommand.mockResolvedValue([
       { id: managerId, name: "CTO", role: "cto", title: "CTO" },
@@ -835,6 +907,7 @@ describe.sequential("agent permission routes", () => {
       ...baseAgent,
       reportsTo: managerId,
       adapterConfig: {
+        cwd: "/tmp/agents/builder",
         instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
       },
     });
@@ -855,6 +928,7 @@ describe.sequential("agent permission routes", () => {
       agentId,
       {
         adapterConfig: {
+          cwd: "/tmp/agents/builder",
           instructionsFilePath: "/tmp/agents/builder/AGENTS.md",
         },
       },
@@ -866,6 +940,35 @@ describe.sequential("agent permission routes", () => {
         }),
       }),
     );
+  });
+
+  it("blocks ancestor managers from setting a report's instructions path outside safe roots", async () => {
+    const managerId = "33333333-3333-4333-8333-333333333333";
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      reportsTo: managerId,
+      adapterConfig: {
+        cwd: "/tmp/agents/builder",
+      },
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerId, name: "CTO", role: "cto", title: "CTO" },
+    ]);
+    const app = await createApp({
+      type: "agent",
+      agentId: managerId,
+      companyId,
+      source: "agent_key",
+      runId: "run-manager",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/instructions-path`)
+      .send({ path: "/etc/passwd", adapterConfigKey: "instructionsFilePath" }));
+
+    expect(res.status).toBe(422);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("blocks unrelated agent-authenticated instructions-path updates", async () => {
