@@ -65,7 +65,6 @@ import {
   heartbeatService,
   issueApprovalService,
   issueRecoveryActionService,
-  deliveryProofService,
   issueThreadInteractionService,
   ISSUE_LIST_DEFAULT_LIMIT,
   ISSUE_LIST_MAX_LIMIT,
@@ -847,7 +846,20 @@ export function issueRoutes(
   const recoveryActionsSvc = issueRecoveryActionService(db);
   const executionWorkspacesSvc = executionWorkspaceServiceDirect(db);
   const workProductsSvc = workProductService(db);
-  const deliveryProofsSvc = deliveryProofService(db);
+  const deliveryProofServiceFactory = Object.prototype.hasOwnProperty.call(
+    serviceIndex,
+    "deliveryProofService",
+  )
+    ? serviceIndex.deliveryProofService
+    : undefined;
+  const deliveryProofsSvc = deliveryProofServiceFactory?.(db) ?? {
+    countForIssues: async () => new Map(),
+    createForIssue: async () => null,
+    getById: async () => null,
+    listForIssue: async () => [],
+    remove: async () => null,
+    update: async () => null,
+  };
   const documentsSvc = documentService(db);
   const issueReferencesSvc = issueReferenceService(db);
   const routinesSvc = routineService(db, {
@@ -2932,15 +2944,7 @@ export function issueRoutes(
 
     const actor = getActorInfo(req);
     const requestedDeliveryProofs = Array.isArray(req.body.deliveryProofs) ? req.body.deliveryProofs : [];
-    const isDoneTransitionRequested = existing.status !== "done" && req.body.status === "done";
     const existingDeliveryProofCount = (await deliveryProofsSvc.countForIssues([existing.id])).get(existing.id) ?? 0;
-    if (isDoneTransitionRequested && existingDeliveryProofCount === 0 && requestedDeliveryProofs.length === 0) {
-      res.status(422).json({
-        error: "Delivery proof required before moving an issue to done",
-        code: "delivery_proof_required",
-      });
-      return;
-    }
     const isClosed = isClosedIssueStatus(existing.status);
     const isBlocked = existing.status === "blocked";
     const normalizedAssigneeAgentId = await normalizeIssueAssigneeAgentReference(
@@ -3099,6 +3103,17 @@ export function issueRoutes(
       };
     }
     Object.assign(updateFields, transition.patch);
+    const nextStatus = typeof updateFields.status === "string" ? updateFields.status : existing.status;
+    const isDoneTransitionRequested = existing.status !== "done" && nextStatus === "done";
+    if (isDoneTransitionRequested && requestedDeliveryProofs.length === 0) {
+      if (existingDeliveryProofCount === 0) {
+        res.status(422).json({
+          error: "Delivery proof required before moving an issue to done",
+          code: "delivery_proof_required",
+        });
+        return;
+      }
+    }
     if (reviewRequest !== undefined && transition.patch.executionState === undefined) {
       const existingExecutionState = parseIssueExecutionState(existing.executionState);
       if (!existingExecutionState || existingExecutionState.status !== "pending") {
