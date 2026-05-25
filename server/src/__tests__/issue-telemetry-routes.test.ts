@@ -139,7 +139,10 @@ describe("issue telemetry routes", () => {
     });
     const res = await request(app)
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
-      .send({ status: "done" });
+      .send({
+        status: "done",
+        deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-telemetry-routes" }],
+      });
 
     expect(res.status).toBe(200);
     await vi.waitFor(() => {
@@ -162,7 +165,10 @@ describe("issue telemetry routes", () => {
     });
     const res = await request(app)
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
-      .send({ status: "done" });
+      .send({
+        status: "done",
+        deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-telemetry-routes" }],
+      });
 
     expect(res.status).toBe(200);
     expect(mockTrackAgentTaskCompleted).not.toHaveBeenCalled();

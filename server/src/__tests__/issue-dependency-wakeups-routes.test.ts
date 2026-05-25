@@ -27,6 +27,14 @@ vi.mock("../services/index.js", () => ({
   agentService: () => ({
     getById: vi.fn(),
   }),
+  deliveryProofService: () => ({
+    countForIssues: vi.fn(async () => new Map()),
+    createForIssue: vi.fn(),
+    getById: vi.fn(),
+    listForIssue: vi.fn(async () => []),
+    remove: vi.fn(),
+    update: vi.fn(),
+  }),
   documentService: () => ({
     getIssueDocumentPayload: vi.fn(async () => ({})),
   }),
@@ -163,7 +171,12 @@ describe("issue dependency wakeups in issue routes", () => {
       },
     ]);
 
-    const res = await request(await createApp()).patch("/api/issues/issue-1").send({ status: "done" });
+    const res = await request(await createApp())
+      .patch("/api/issues/issue-1")
+      .send({
+        status: "done",
+        deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-dependency-wakeups-routes" }],
+      });
     expect(res.status).toBe(200);
     await vi.waitFor(() => {
       expect(mockWakeup).toHaveBeenCalledWith(
@@ -245,7 +258,12 @@ describe("issue dependency wakeups in issue routes", () => {
       childIssueSummaryTruncated: false,
     });
 
-    const res = await request(await createApp()).patch("/api/issues/child-1").send({ status: "done" });
+    const res = await request(await createApp())
+      .patch("/api/issues/child-1")
+      .send({
+        status: "done",
+        deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-dependency-wakeups-routes" }],
+      });
     expect(res.status).toBe(200);
     await vi.waitFor(() => {
       expect(mockWakeup).toHaveBeenCalledWith(

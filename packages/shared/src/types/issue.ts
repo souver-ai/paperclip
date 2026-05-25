@@ -20,6 +20,8 @@ import type {
   IssueRecoveryActionOwnerType,
   IssueRecoveryActionStatus,
   IssueWorkMode,
+  IssueCategory,
+  IssueSurface,
   ModelProfileKey,
   IssueThreadInteractionContinuationPolicy,
   IssueThreadInteractionKind,
@@ -30,6 +32,7 @@ import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
 import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
 import type { IssueWorkProduct } from "./work-product.js";
+import type { IssueDeliveryProof } from "./delivery-proof.js";
 
 export type { IssueWorkMode };
 
@@ -437,6 +440,8 @@ export interface Issue {
   description: string | null;
   status: IssueStatus;
   workMode: IssueWorkMode;
+  category?: IssueCategory;
+  surfaces?: IssueSurface[];
   priority: IssuePriority;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
@@ -488,6 +493,9 @@ export interface Issue {
   goal?: Goal | null;
   currentExecutionWorkspace?: ExecutionWorkspace | null;
   workProducts?: IssueWorkProduct[];
+  deliveryProofs?: IssueDeliveryProof[];
+  deliveryProofCount?: number;
+  missingDeliveryProof?: boolean;
   mentionedProjects?: Project[];
   myLastTouchAt?: Date | null;
   lastExternalCommentAt?: Date | null;

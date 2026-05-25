@@ -12,6 +12,7 @@ import type {
   IssueComment,
   IssueDocument,
   IssueLabel,
+  IssueDeliveryProof,
   IssueRecoveryAction,
   IssueRetryNowResponse,
   IssueThreadInteraction,
@@ -48,6 +49,8 @@ export const issuesApi = {
       inboxArchivedByUserId?: string;
       unreadForUserId?: string;
       labelId?: string;
+      category?: string;
+      surface?: string;
       workspaceId?: string;
       executionWorkspaceId?: string;
       originKind?: string;
@@ -74,6 +77,8 @@ export const issuesApi = {
     if (filters?.inboxArchivedByUserId) params.set("inboxArchivedByUserId", filters.inboxArchivedByUserId);
     if (filters?.unreadForUserId) params.set("unreadForUserId", filters.unreadForUserId);
     if (filters?.labelId) params.set("labelId", filters.labelId);
+    if (filters?.category) params.set("category", filters.category);
+    if (filters?.surface) params.set("surface", filters.surface);
     if (filters?.workspaceId) params.set("workspaceId", filters.workspaceId);
     if (filters?.executionWorkspaceId) params.set("executionWorkspaceId", filters.executionWorkspaceId);
     if (filters?.originKind) params.set("originKind", filters.originKind);
@@ -98,6 +103,8 @@ export const issuesApi = {
       assigneeUserId?: string;
       projectId?: string;
       labelId?: string;
+      category?: string;
+      surface?: string;
       q?: string;
     },
   ) => {
@@ -108,6 +115,8 @@ export const issuesApi = {
     if (filters.assigneeUserId) params.set("assigneeUserId", filters.assigneeUserId);
     if (filters.projectId) params.set("projectId", filters.projectId);
     if (filters.labelId) params.set("labelId", filters.labelId);
+    if (filters.category) params.set("category", filters.category);
+    if (filters.surface) params.set("surface", filters.surface);
     if (filters.q) params.set("q", filters.q);
     return api.get<{ count: number }>(`/companies/${companyId}/issues/count?${params.toString()}`);
   },
@@ -291,4 +300,10 @@ export const issuesApi = {
   updateWorkProduct: (id: string, data: Record<string, unknown>) =>
     api.patch<IssueWorkProduct>(`/work-products/${id}`, data),
   deleteWorkProduct: (id: string) => api.delete<IssueWorkProduct>(`/work-products/${id}`),
+  listDeliveryProofs: (id: string) => api.get<IssueDeliveryProof[]>(`/issues/${id}/delivery-proofs`),
+  createDeliveryProof: (id: string, data: Record<string, unknown>) =>
+    api.post<IssueDeliveryProof>(`/issues/${id}/delivery-proofs`, data),
+  updateDeliveryProof: (id: string, data: Record<string, unknown>) =>
+    api.patch<IssueDeliveryProof>(`/delivery-proofs/${id}`, data),
+  deleteDeliveryProof: (id: string) => api.delete<IssueDeliveryProof>(`/delivery-proofs/${id}`),
 };

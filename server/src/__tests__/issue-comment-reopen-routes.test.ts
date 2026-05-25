@@ -121,6 +121,14 @@ vi.mock("../services/index.js", () => ({
   }),
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
+  deliveryProofService: () => ({
+    countForIssues: vi.fn(async () => new Map()),
+    createForIssue: vi.fn(),
+    getById: vi.fn(),
+    listForIssue: vi.fn(async () => []),
+    remove: vi.fn(),
+    update: vi.fn(),
+  }),
   documentService: () => ({}),
   executionWorkspaceService: () => ({}),
   feedbackService: () => mockFeedbackService,
@@ -1119,7 +1127,10 @@ describe.sequential("issue comment reopen routes", () => {
 
     const res = await request(await installActor(createApp()))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
-      .send({ status: "done" });
+      .send({
+        status: "done",
+        deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-comment-reopen-routes" }],
+      });
 
     expect(res.status).toBe(200);
     expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
@@ -1166,7 +1177,11 @@ describe.sequential("issue comment reopen routes", () => {
 
     const res = await request(await installActor(createApp()))
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
-      .send({ status: "done", comment: "Approved for ship" });
+      .send({
+        status: "done",
+        comment: "Approved for ship",
+        deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-comment-reopen-routes" }],
+      });
 
     expect(res.status).toBe(200);
     expect(mockDb.transaction).toHaveBeenCalledTimes(1);

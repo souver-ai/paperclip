@@ -16,6 +16,8 @@ export type IssueFilterState = {
   assignees: string[];
   creators: string[];
   labels: string[];
+  categories?: string[];
+  surfaces?: string[];
   projects: string[];
   workspaces: string[];
   liveOnly?: boolean;
@@ -28,6 +30,8 @@ export const defaultIssueFilterState: IssueFilterState = {
   assignees: [],
   creators: [],
   labels: [],
+  categories: [],
+  surfaces: [],
   projects: [],
   workspaces: [],
   liveOnly: false,
@@ -69,6 +73,8 @@ export function normalizeIssueFilterState(value: unknown): IssueFilterState {
     assignees: normalizeIssueFilterValueArray(candidate.assignees),
     creators: normalizeIssueFilterValueArray(candidate.creators),
     labels: normalizeIssueFilterValueArray(candidate.labels),
+    categories: normalizeIssueFilterValueArray(candidate.categories),
+    surfaces: normalizeIssueFilterValueArray(candidate.surfaces),
     projects: normalizeIssueFilterValueArray(candidate.projects),
     workspaces: normalizeIssueFilterValueArray(candidate.workspaces),
     liveOnly: candidate.liveOnly === true,
@@ -157,6 +163,12 @@ export function applyIssueFilters(
   if (state.labels.length > 0) {
     result = result.filter((issue) => (issue.labelIds ?? []).some((id) => state.labels.includes(id)));
   }
+  if ((state.categories ?? []).length > 0) {
+    result = result.filter((issue) => (state.categories ?? []).includes(issue.category ?? "uncategorized"));
+  }
+  if ((state.surfaces ?? []).length > 0) {
+    result = result.filter((issue) => (issue.surfaces ?? []).some((surface) => (state.surfaces ?? []).includes(surface)));
+  }
   if (state.projects.length > 0) {
     result = result.filter((issue) => issue.projectId != null && state.projects.includes(issue.projectId));
   }
@@ -179,6 +191,8 @@ export function countActiveIssueFilters(
   if (state.assignees.length > 0) count += 1;
   if (state.creators.length > 0) count += 1;
   if (state.labels.length > 0) count += 1;
+  if ((state.categories ?? []).length > 0) count += 1;
+  if ((state.surfaces ?? []).length > 0) count += 1;
   if (state.projects.length > 0) count += 1;
   if (state.workspaces.length > 0) count += 1;
   if (state.liveOnly) count += 1;
