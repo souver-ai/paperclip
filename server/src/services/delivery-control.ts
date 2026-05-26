@@ -50,6 +50,7 @@ const AUTO_MERGE_SENSITIVE_TERMS = [
 ];
 
 type IssueRow = typeof issues.$inferSelect;
+type FeatureRow = typeof features.$inferSelect;
 type RepoLockRow = typeof repoLocks.$inferSelect;
 type VerificationRunRow = typeof verificationRuns.$inferSelect;
 
@@ -70,6 +71,69 @@ function cleanUndefined<T extends Record<string, unknown>>(input: T): Partial<T>
 
 function isOpenIssueStatus(status: string) {
   return status !== "done" && status !== "cancelled";
+}
+
+function primarySurface(issue: IssueRow): string | null {
+  const surfaces = Array.isArray(issue.surfaces) ? issue.surfaces : [];
+  return surfaces.find((surface) => typeof surface === "string" && surface.trim().length > 0) ?? null;
+}
+
+function featureStatusFromIssue(issue: IssueRow): CreateFeature["intakeStatus"] {
+  if (issue.status === "in_progress" || issue.status === "in_review") return "in_delivery";
+  if (issue.status === "blocked") return "selected";
+  if (issue.status === "todo") return "queued";
+  return "ready_for_priority";
+}
+
+function featureIdFromIssue(issue: IssueRow): string {
+  if (issue.identifier) return issue.identifier;
+  if (issue.issueNumber) return `ISSUE-${issue.issueNumber}`;
+  return `ISSUE-${issue.id.slice(0, 8)}`;
+}
+
+export function buildFeatureBackfillCandidates(
+  issueRows: IssueRow[],
+  existingFeatureRows: FeatureRow[],
+): CreateFeature[] {
+  const existingRootIssueIds = new Set(existingFeatureRows.map((feature) => feature.rootIssueId).filter(Boolean));
+  const existingFeatureIds = new Set(existingFeatureRows.map((feature) => feature.featureId));
+  const maxRank = existingFeatureRows.reduce((max, feature) => Math.max(max, feature.priorityRank ?? 0), 0);
+
+  return issueRows
+    .filter((issue) => issue.category === "feature" && isOpenIssueStatus(issue.status) && issue.hiddenAt == null)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .reduce<CreateFeature[]>((candidates, issue) => {
+      const featureId = featureIdFromIssue(issue);
+      if (existingRootIssueIds.has(issue.id) || existingFeatureIds.has(featureId)) return candidates;
+      const repo = primarySurface(issue);
+      const rank = maxRank + candidates.length + 1;
+      candidates.push({
+        featureId,
+        title: issue.title,
+        sourceTeam: "pm",
+        intakeStatus: featureStatusFromIssue(issue),
+        priorityRank: rank,
+        pmBrief: {
+          sourceIssueId: issue.id,
+          sourceIssueIdentifier: issue.identifier,
+          sourceIssueStatus: issue.status,
+        },
+        whyNow: issue.nextAction ?? "Backfilled from an existing Feature issue.",
+        impactEstimate: issue.priority,
+        effortEstimate: null,
+        riskLevel: "medium",
+        productArea: repo ?? "paperclip",
+        repo,
+        rootIssueId: issue.id,
+        deliveryState: issue.deliveryState as CreateFeature["deliveryState"],
+        requiredEvidence: [],
+        terminalEvidence: issue.terminalEvidence,
+        nextAction: issue.nextAction ?? "PM/CTO prioritizes this feature before delivery starts.",
+        ownerAgentId: issue.assigneeAgentId,
+      });
+      existingFeatureIds.add(featureId);
+      return candidates;
+    }, []);
 }
 
 function hasSensitiveAutoMergeSurface(issue: IssueRow, repo: string | null) {
@@ -257,6 +321,39 @@ export function deliveryControlService(db: Db) {
       })
       .returning()
       .then((rows) => rows[0] ?? null);
+  }
+
+  async function backfillFeaturesFromIssues(companyId: string) {
+    const [issueRows, existingFeatureRows] = await Promise.all([
+      db
+        .select()
+        .from(issues)
+        .where(and(
+          eq(issues.companyId, companyId),
+          eq(issues.category, "feature"),
+          sql`${issues.hiddenAt} is null`,
+          sql`${issues.status} not in ('done', 'cancelled')`,
+        )),
+      db.select().from(features).where(eq(features.companyId, companyId)),
+    ]);
+    const candidates = buildFeatureBackfillCandidates(issueRows, existingFeatureRows);
+    if (candidates.length === 0) {
+      return { created: 0, skipped: issueRows.length, features: [] };
+    }
+
+    const created = await db
+      .insert(features)
+      .values(candidates.map((candidate) => ({ companyId, ...candidate })))
+      .onConflictDoNothing({
+        target: [features.companyId, features.featureId],
+      })
+      .returning();
+
+    return {
+      created: created.length,
+      skipped: issueRows.length - created.length,
+      features: created,
+    };
   }
 
   async function updateFeature(id: string, input: UpdateFeature, changedBy: string | null = null) {
@@ -609,6 +706,7 @@ export function deliveryControlService(db: Db) {
     listFeatures,
     getFeature,
     createFeature,
+    backfillFeaturesFromIssues,
     updateFeature,
     listAgentThroughput,
     listAutoMergeCandidates,

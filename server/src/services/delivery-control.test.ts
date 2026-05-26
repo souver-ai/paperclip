@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAutoMergeCandidates } from "./delivery-control.js";
+import { buildAutoMergeCandidates, buildFeatureBackfillCandidates } from "./delivery-control.js";
 
 function issue(overrides: Record<string, unknown> = {}) {
   return {
@@ -9,12 +9,19 @@ function issue(overrides: Record<string, unknown> = {}) {
     description: "Small app_cli fix",
     status: "in_review",
     surfaces: ["app_cli"],
+    category: "uncategorized",
     deliveryState: "merge_ready",
     blockerType: null,
     benjaminRequired: false,
     autoMergeEligible: false,
     repoLockId: "22222222-2222-4222-8222-222222222222",
     identifier: "SOU-1",
+    issueNumber: 1,
+    priority: "medium",
+    nextAction: null,
+    assigneeAgentId: null,
+    terminalEvidence: null,
+    hiddenAt: null,
     updatedAt: new Date("2026-05-26T01:00:00.000Z"),
     ...overrides,
   } as any;
@@ -105,5 +112,68 @@ describe("buildAutoMergeCandidates", () => {
       "repo_blocker:branch_stale",
       "verification_not_green",
     ]));
+  });
+});
+
+describe("buildFeatureBackfillCandidates", () => {
+  it("turns open feature issues into ranked native features", () => {
+    const candidates = buildFeatureBackfillCandidates(
+      [
+        issue({
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          category: "feature",
+          status: "todo",
+          deliveryState: "queued_repo_gate",
+          identifier: "SOU-42",
+          title: "Prioritize feature board",
+          surfaces: ["dashboard"],
+          nextAction: "CTO selects the next delivery slot.",
+          updatedAt: new Date("2026-05-26T03:00:00.000Z"),
+        }),
+      ],
+      [],
+    );
+
+    expect(candidates).toEqual([
+      expect.objectContaining({
+        featureId: "SOU-42",
+        title: "Prioritize feature board",
+        intakeStatus: "queued",
+        priorityRank: 1,
+        productArea: "dashboard",
+        repo: "dashboard",
+        rootIssueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        nextAction: "CTO selects the next delivery slot.",
+      }),
+    ]);
+  });
+
+  it("skips closed issues and issues that already have a native feature", () => {
+    const candidates = buildFeatureBackfillCandidates(
+      [
+        issue({
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          category: "feature",
+          status: "done",
+          identifier: "SOU-42",
+        }),
+        issue({
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          category: "feature",
+          status: "backlog",
+          identifier: "SOU-43",
+        }),
+      ],
+      [
+        {
+          id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          featureId: "SOU-43",
+          rootIssueId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          priorityRank: 7,
+        },
+      ] as any,
+    );
+
+    expect(candidates).toHaveLength(0);
   });
 });
