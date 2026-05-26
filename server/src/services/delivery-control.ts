@@ -1,8 +1,12 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
+  activityLog,
+  agents,
   harnessFindings,
   harnessRuns,
+  heartbeatRuns,
+  issues,
   repoLocks,
   verificationRuns,
 } from "@paperclipai/db";
@@ -14,6 +18,11 @@ import type {
   UpdateRepoLock,
   UpsertRepoLock,
 } from "@paperclipai/shared";
+
+function numberValue(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+}
 
 function parseDate(value: string | null | undefined): Date | null | undefined {
   if (value === undefined) return undefined;
@@ -32,6 +41,110 @@ export function deliveryControlService(db: Db) {
       .from(repoLocks)
       .where(eq(repoLocks.companyId, companyId))
       .orderBy(repoLocks.repo);
+  }
+
+  async function listAgentThroughput(companyId: string) {
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const agentRows = await db
+      .select({
+        id: agents.id,
+        name: agents.name,
+        role: agents.role,
+        status: agents.status,
+        lastHeartbeatAt: agents.lastHeartbeatAt,
+      })
+      .from(agents)
+      .where(eq(agents.companyId, companyId))
+      .orderBy(agents.name);
+
+    const issueRows = await db
+      .select({
+        agentId: issues.assigneeAgentId,
+        assignedOpenIssues: sql<number>`count(*) filter (where ${issues.status} not in ('done', 'cancelled') and ${issues.hiddenAt} is null)::int`,
+        assignedBlockedIssues: sql<number>`count(*) filter (where ${issues.status} = 'blocked' and ${issues.hiddenAt} is null)::int`,
+        assignedInReviewIssues: sql<number>`count(*) filter (where ${issues.status} = 'in_review' and ${issues.hiddenAt} is null)::int`,
+        completedIssues7d: sql<number>`count(*) filter (where ${issues.status} = 'done' and ${issues.completedAt} >= ${since7d}::timestamptz and ${issues.hiddenAt} is null)::int`,
+      })
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), isNotNull(issues.assigneeAgentId)))
+      .groupBy(issues.assigneeAgentId);
+
+    const createdIssueRows = await db
+      .select({
+        agentId: issues.createdByAgentId,
+        createdIssues7d: sql<number>`count(*) filter (where ${issues.createdAt} >= ${since7d}::timestamptz and ${issues.hiddenAt} is null)::int`,
+      })
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), isNotNull(issues.createdByAgentId)))
+      .groupBy(issues.createdByAgentId);
+
+    const runRows = await db
+      .select({
+        agentId: heartbeatRuns.agentId,
+        runs24h: sql<number>`count(*)::int`,
+        successfulRuns24h: sql<number>`count(*) filter (where ${heartbeatRuns.status} = 'succeeded')::int`,
+        failedRuns24h: sql<number>`count(*) filter (where ${heartbeatRuns.status} in ('failed', 'timed_out', 'cancelled'))::int`,
+        productiveRuns24h: sql<number>`count(*) filter (where ${heartbeatRuns.livenessState} in ('completed', 'advanced'))::int`,
+        planOnlyRuns24h: sql<number>`count(*) filter (where ${heartbeatRuns.livenessState} in ('plan_only', 'empty_response'))::int`,
+        blockedRuns24h: sql<number>`count(*) filter (where ${heartbeatRuns.livenessState} in ('blocked', 'failed', 'needs_followup'))::int`,
+        lastRunAt: sql<Date | null>`max(coalesce(${heartbeatRuns.startedAt}, ${heartbeatRuns.createdAt}))`,
+      })
+      .from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.companyId, companyId), sql`${heartbeatRuns.createdAt} >= ${since24h}::timestamptz`))
+      .groupBy(heartbeatRuns.agentId);
+
+    const activityRows = await db
+      .select({
+        agentId: activityLog.agentId,
+        activityEvents24h: sql<number>`count(*)::int`,
+      })
+      .from(activityLog)
+      .where(and(eq(activityLog.companyId, companyId), isNotNull(activityLog.agentId), sql`${activityLog.createdAt} >= ${since24h}::timestamptz`))
+      .groupBy(activityLog.agentId);
+
+    const issueByAgent = new Map(issueRows.map((row) => [row.agentId, row]));
+    const createdByAgent = new Map(createdIssueRows.map((row) => [row.agentId, row]));
+    const runsByAgent = new Map(runRows.map((row) => [row.agentId, row]));
+    const activityByAgent = new Map(activityRows.map((row) => [row.agentId, row]));
+
+    return agentRows
+      .map((agent) => {
+        const issueStats = issueByAgent.get(agent.id);
+        const createdStats = createdByAgent.get(agent.id);
+        const runStats = runsByAgent.get(agent.id);
+        const activityStats = activityByAgent.get(agent.id);
+        return {
+          agentId: agent.id,
+          name: agent.name,
+          role: agent.role,
+          status: agent.status,
+          lastHeartbeatAt: agent.lastHeartbeatAt,
+          assignedOpenIssues: numberValue(issueStats?.assignedOpenIssues),
+          assignedBlockedIssues: numberValue(issueStats?.assignedBlockedIssues),
+          assignedInReviewIssues: numberValue(issueStats?.assignedInReviewIssues),
+          createdIssues7d: numberValue(createdStats?.createdIssues7d),
+          completedIssues7d: numberValue(issueStats?.completedIssues7d),
+          runs24h: numberValue(runStats?.runs24h),
+          successfulRuns24h: numberValue(runStats?.successfulRuns24h),
+          failedRuns24h: numberValue(runStats?.failedRuns24h),
+          productiveRuns24h: numberValue(runStats?.productiveRuns24h),
+          planOnlyRuns24h: numberValue(runStats?.planOnlyRuns24h),
+          blockedRuns24h: numberValue(runStats?.blockedRuns24h),
+          activityEvents24h: numberValue(activityStats?.activityEvents24h),
+          lastRunAt: runStats?.lastRunAt ?? null,
+        };
+      })
+      .sort((a, b) => {
+        const blockedDelta = b.assignedBlockedIssues + b.blockedRuns24h - (a.assignedBlockedIssues + a.blockedRuns24h);
+        if (blockedDelta !== 0) return blockedDelta;
+        const openDelta = b.assignedOpenIssues - a.assignedOpenIssues;
+        if (openDelta !== 0) return openDelta;
+        const productiveDelta = b.productiveRuns24h - a.productiveRuns24h;
+        if (productiveDelta !== 0) return productiveDelta;
+        return a.name.localeCompare(b.name);
+      });
   }
 
   async function getRepoLock(id: string) {
@@ -213,6 +326,7 @@ export function deliveryControlService(db: Db) {
 
   return {
     listRepoLocks,
+    listAgentThroughput,
     getRepoLock,
     upsertRepoLock,
     updateRepoLock,

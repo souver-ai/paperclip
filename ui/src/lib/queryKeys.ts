@@ -72,6 +72,7 @@ export const queryKeys = {
   },
   deliveryControl: {
     repoLocks: (companyId: string) => ["delivery-control", companyId, "repo-locks"] as const,
+    agentThroughput: (companyId: string) => ["delivery-control", companyId, "agent-throughput"] as const,
     verificationRuns: (companyId: string) => ["delivery-control", companyId, "verification-runs"] as const,
     harnessRuns: (companyId: string) => ["delivery-control", companyId, "harness-runs"] as const,
     harnessFindings: (companyId: string) => ["delivery-control", companyId, "harness-findings"] as const,

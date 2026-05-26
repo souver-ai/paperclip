@@ -401,6 +401,7 @@ export type {
   VerificationRun,
   HarnessRun,
   HarnessFinding,
+  AgentThroughput,
   Issue,
   IssueAssigneeAdapterOverrides,
   IssueBlockerAttention,

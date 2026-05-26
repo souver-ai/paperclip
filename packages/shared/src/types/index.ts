@@ -150,6 +150,7 @@ export type {
   VerificationRun,
   HarnessRun,
   HarnessFinding,
+  AgentThroughput,
 } from "./delivery-control.js";
 
 export type {
