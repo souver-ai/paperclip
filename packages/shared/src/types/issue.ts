@@ -27,6 +27,8 @@ import type {
   IssueThreadInteractionKind,
   IssueThreadInteractionStatus,
   IssueStatus,
+  DeliveryState,
+  BlockerType,
 } from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
@@ -442,6 +444,14 @@ export interface Issue {
   workMode: IssueWorkMode;
   category?: IssueCategory;
   surfaces?: IssueSurface[];
+  deliveryState?: DeliveryState;
+  blockerType?: BlockerType | null;
+  terminalEvidence?: Record<string, unknown> | null;
+  nextAction?: string | null;
+  benjaminRequired?: boolean;
+  autoMergeEligible?: boolean;
+  repoLockId?: string | null;
+  antiRecurrencePatternId?: string | null;
   priority: IssuePriority;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;

@@ -177,6 +177,89 @@ export const ISSUE_SURFACES = [
   "external",
 ] as const;
 export type IssueSurface = (typeof ISSUE_SURFACES)[number];
+
+export const DELIVERY_STATES = [
+  "intake",
+  "queued_repo_gate",
+  "active_branch",
+  "pr_ready",
+  "in_review",
+  "changes_requested",
+  "merge_ready",
+  "merged",
+  "target_verifying",
+  "merged_verified",
+  "live_verified",
+  "waived_by_benjamin",
+  "parked_hold",
+] as const;
+export type DeliveryState = (typeof DELIVERY_STATES)[number];
+
+export const BLOCKER_TYPES = [
+  "repo_dirty",
+  "branch_stale",
+  "port_main",
+  "preflight_failed",
+  "github_token",
+  "missing_pr",
+  "security_gate",
+  "test_gate",
+  "harness_runtime",
+  "credential_binding",
+  "approval_benjamin",
+  "operator_runtime",
+  "product_scope",
+  "external_dependency",
+  "unknown",
+] as const;
+export type BlockerType = (typeof BLOCKER_TYPES)[number];
+
+export const REPO_LOCK_STATES = [
+  "free",
+  "queued_repo_gate",
+  "active_branch",
+  "in_review",
+  "locked_cto",
+  "blocked_needs_benjamin",
+] as const;
+export type RepoLockState = (typeof REPO_LOCK_STATES)[number];
+
+export const VERIFICATION_RUN_TYPES = [
+  "unit",
+  "integration",
+  "e2e",
+  "visible_e2e",
+  "security",
+  "manual_review",
+  "build",
+  "live_smoke",
+] as const;
+export type VerificationRunType = (typeof VERIFICATION_RUN_TYPES)[number];
+
+export const VERIFICATION_RUN_STATUSES = ["pass", "fail", "blocked", "inconclusive"] as const;
+export type VerificationRunStatus = (typeof VERIFICATION_RUN_STATUSES)[number];
+
+export const VERIFICATION_FAILURE_CATEGORIES = [
+  "product_regression",
+  "test_flake",
+  "harness_failure",
+  "environment_failure",
+  "missing_credentials",
+  "repo_state",
+  "security_concern",
+  "unknown",
+] as const;
+export type VerificationFailureCategory = (typeof VERIFICATION_FAILURE_CATEGORIES)[number];
+
+export const HARNESS_RUN_STATUSES = ["pass", "fail", "blocked", "inconclusive"] as const;
+export type HarnessRunStatus = (typeof HARNESS_RUN_STATUSES)[number];
+
+export const HARNESS_FINDING_SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
+export type HarnessFindingSeverity = (typeof HARNESS_FINDING_SEVERITIES)[number];
+
+export const HARNESS_FINDING_STATUSES = ["open", "triaged", "converted_to_ticket", "waived", "resolved"] as const;
+export type HarnessFindingStatus = (typeof HARNESS_FINDING_STATUSES)[number];
+
 export const MAX_ISSUE_REQUEST_DEPTH = 1024;
 
 export const ISSUE_COMMENT_AUTHOR_TYPES = ["user", "agent", "system"] as const;

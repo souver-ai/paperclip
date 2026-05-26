@@ -255,6 +255,27 @@ describe("issue validators", () => {
     expect(parsed.deliveryProofs?.[0]?.name).toBe("Issue taxonomy filters");
   });
 
+  it("accepts delivery control fields and rejects invalid blocker routing", () => {
+    const parsed = updateIssueSchema.parse({
+      deliveryState: "queued_repo_gate",
+      blockerType: "repo_dirty",
+      terminalEvidence: {
+        kind: "merged_verified",
+        prUrl: "https://github.com/souver-ai/paperclip/pull/123",
+      },
+      nextAction: "CTO cleans the repo lock before waking Dev Feature.",
+      benjaminRequired: false,
+      autoMergeEligible: true,
+      repoLockId: "11111111-1111-4111-8111-111111111111",
+      antiRecurrencePatternId: "repo-lock-one-active-branch",
+    });
+
+    expect(parsed.deliveryState).toBe("queued_repo_gate");
+    expect(parsed.blockerType).toBe("repo_dirty");
+    expect(parsed.autoMergeEligible).toBe(true);
+    expect(updateIssueSchema.safeParse({ blockerType: "needs vibes" }).success).toBe(false);
+  });
+
   it("validates blocked inbox attention payloads and requires redacted secret fields", () => {
     const parsed = issueBlockedInboxAttentionSchema.parse({
       kind: "blocked",

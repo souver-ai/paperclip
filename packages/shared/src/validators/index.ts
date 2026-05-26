@@ -163,6 +163,8 @@ export {
   createIssueLabelSchema,
   issueCategorySchema,
   issueSurfaceSchema,
+  deliveryStateSchema,
+  blockerTypeSchema,
   issueBlockedInboxAttentionSchema,
   issueBlockedInboxIssueRefSchema,
   issueBlockedInboxReasonSchema,

@@ -16,6 +16,8 @@ import {
   ISSUE_PRIORITIES,
   ISSUE_CATEGORIES,
   ISSUE_SURFACES,
+  DELIVERY_STATES,
+  BLOCKER_TYPES,
   ISSUE_RECOVERY_ACTION_KINDS,
   ISSUE_RECOVERY_ACTION_OUTCOMES,
   ISSUE_RECOVERY_ACTION_OWNER_TYPES,
@@ -225,6 +227,8 @@ export const issueReviewRequestSchema = z.object({
 
 export const issueCategorySchema = z.enum(ISSUE_CATEGORIES);
 export const issueSurfaceSchema = z.enum(ISSUE_SURFACES);
+export const deliveryStateSchema = z.enum(DELIVERY_STATES);
+export const blockerTypeSchema = z.enum(BLOCKER_TYPES);
 
 export const issueExecutionStateSchema = z.object({
   status: z.enum(ISSUE_EXECUTION_STATE_STATUSES),
@@ -383,6 +387,14 @@ const createIssueBaseSchema = z.object({
   workMode: z.enum(ISSUE_WORK_MODES).optional().default("standard"),
   category: issueCategorySchema.optional().default("uncategorized"),
   surfaces: z.array(issueSurfaceSchema).optional().default([]),
+  deliveryState: deliveryStateSchema.optional().default("intake"),
+  blockerType: blockerTypeSchema.optional().nullable(),
+  terminalEvidence: z.record(z.string(), z.unknown()).optional().nullable(),
+  nextAction: z.string().trim().max(2000).optional().nullable(),
+  benjaminRequired: z.boolean().optional().default(false),
+  autoMergeEligible: z.boolean().optional().default(false),
+  repoLockId: z.string().uuid().optional().nullable(),
+  antiRecurrencePatternId: z.string().trim().min(1).max(160).optional().nullable(),
   priority: z.enum(ISSUE_PRIORITIES).optional().default("medium"),
   assigneeAgentId: z.string().uuid().optional().nullable(),
   assigneeUserId: z.string().optional().nullable(),

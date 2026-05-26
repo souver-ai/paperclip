@@ -145,6 +145,12 @@ export type {
 export type {
   IssueDeliveryProof,
 } from "./delivery-proof.js";
+export type {
+  RepoLock,
+  VerificationRun,
+  HarnessRun,
+  HarnessFinding,
+} from "./delivery-control.js";
 
 export type {
   Issue,
