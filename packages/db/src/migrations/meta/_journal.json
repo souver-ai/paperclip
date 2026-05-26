@@ -603,6 +603,13 @@
       "when": 1779718800000,
       "tag": "0085_issue_taxonomy_delivery_proofs",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1779811200000,
+      "tag": "0086_control_tower_primitives",
+      "breakpoints": true
     }
   ]
 }

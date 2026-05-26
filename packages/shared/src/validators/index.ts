@@ -154,6 +154,20 @@ export {
   type CreateIssueDeliveryProof,
   type UpdateIssueDeliveryProof,
 } from "./delivery-proof.js";
+export {
+  upsertRepoLockSchema,
+  updateRepoLockSchema,
+  createVerificationRunSchema,
+  createHarnessRunSchema,
+  createHarnessFindingSchema,
+  updateHarnessFindingSchema,
+  type UpsertRepoLock,
+  type UpdateRepoLock,
+  type CreateVerificationRun,
+  type CreateHarnessRun,
+  type CreateHarnessFinding,
+  type UpdateHarnessFinding,
+} from "./delivery-control.js";
 
 export {
   createIssueSchema,
@@ -163,6 +177,8 @@ export {
   createIssueLabelSchema,
   issueCategorySchema,
   issueSurfaceSchema,
+  deliveryStateSchema,
+  blockerTypeSchema,
   issueBlockedInboxAttentionSchema,
   issueBlockedInboxIssueRefSchema,
   issueBlockedInboxReasonSchema,
