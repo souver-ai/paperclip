@@ -28,6 +28,12 @@ export function deliveryControlRoutes(db: Db) {
     res.json(await svc.listAgentThroughput(companyId));
   });
 
+  router.get("/companies/:companyId/auto-merge-candidates", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await svc.listAutoMergeCandidates(companyId));
+  });
+
   router.post("/companies/:companyId/repo-locks", validate(upsertRepoLockSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);

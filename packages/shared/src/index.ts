@@ -402,6 +402,7 @@ export type {
   HarnessRun,
   HarnessFinding,
   AgentThroughput,
+  AutoMergeCandidate,
   Issue,
   IssueAssigneeAdapterOverrides,
   IssueBlockerAttention,
