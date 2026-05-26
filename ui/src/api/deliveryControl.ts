@@ -4,6 +4,7 @@ import type {
   CreateVerificationRun,
   AgentThroughput,
   AutoMergeCandidate,
+  Feature,
   HarnessFinding,
   HarnessRun,
   RepoLock,
@@ -18,6 +19,8 @@ export const deliveryControlApi = {
   listRepoLocks: (companyId: string) => api.get<RepoLock[]>(`/companies/${companyId}/repo-locks`),
   listAgentThroughput: (companyId: string) =>
     api.get<AgentThroughput[]>(`/companies/${companyId}/agent-throughput`),
+  listFeatures: (companyId: string) =>
+    api.get<Feature[]>(`/companies/${companyId}/features`),
   listAutoMergeCandidates: (companyId: string) =>
     api.get<AutoMergeCandidate[]>(`/companies/${companyId}/auto-merge-candidates`),
   upsertRepoLock: (companyId: string, data: UpsertRepoLock) =>

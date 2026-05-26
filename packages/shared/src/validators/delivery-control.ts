@@ -1,6 +1,10 @@
 import { z } from "zod";
 import {
   BLOCKER_TYPES,
+  DELIVERY_STATES,
+  FEATURE_INTAKE_STATUSES,
+  FEATURE_RISK_LEVELS,
+  FEATURE_SOURCE_TEAMS,
   HARNESS_FINDING_SEVERITIES,
   HARNESS_FINDING_STATUSES,
   HARNESS_RUN_STATUSES,
@@ -32,6 +36,36 @@ export type UpsertRepoLock = z.infer<typeof upsertRepoLockSchema>;
 export const updateRepoLockSchema = upsertRepoLockSchema.partial().omit({ repo: true });
 
 export type UpdateRepoLock = z.infer<typeof updateRepoLockSchema>;
+
+const pmBriefSchema = z.record(z.string(), z.unknown()).optional().default({});
+const requiredEvidenceSchema = z.array(z.string().trim().min(1).max(240)).max(50).optional().default([]);
+
+export const createFeatureSchema = z.object({
+  featureId: z.string().trim().min(1).max(160),
+  title: z.string().trim().min(1).max(240),
+  sourceTeam: z.enum(FEATURE_SOURCE_TEAMS).optional().default("ops"),
+  intakeStatus: z.enum(FEATURE_INTAKE_STATUSES).optional().default("proposed"),
+  priorityRank: z.number().int().nonnegative().optional().nullable(),
+  pmBrief: pmBriefSchema,
+  whyNow: z.string().trim().max(2000).optional().nullable(),
+  impactEstimate: z.string().trim().max(500).optional().nullable(),
+  effortEstimate: z.string().trim().max(500).optional().nullable(),
+  riskLevel: z.enum(FEATURE_RISK_LEVELS).optional().default("medium"),
+  productArea: z.string().trim().min(1).max(160).optional().default("paperclip"),
+  repo: surfaceOrRepoSchema.optional().nullable(),
+  rootIssueId: z.string().uuid().optional().nullable(),
+  deliveryState: z.enum(DELIVERY_STATES).optional().default("intake"),
+  requiredEvidence: requiredEvidenceSchema,
+  terminalEvidence: z.record(z.string(), z.unknown()).optional().nullable(),
+  nextAction: z.string().trim().max(2000).optional().nullable(),
+  ownerAgentId: z.string().uuid().optional().nullable(),
+}).strict();
+
+export type CreateFeature = z.infer<typeof createFeatureSchema>;
+
+export const updateFeatureSchema = createFeatureSchema.partial().omit({ featureId: true });
+
+export type UpdateFeature = z.infer<typeof updateFeatureSchema>;
 
 export const createVerificationRunSchema = z.object({
   issueId: z.string().uuid().optional().nullable(),

@@ -151,6 +151,8 @@ export type {
   HarnessRun,
   HarnessFinding,
   AgentThroughput,
+  Feature,
+  FeaturePriorityEvent,
   AutoMergeCandidate,
 } from "./delivery-control.js";
 
