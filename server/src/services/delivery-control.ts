@@ -3,6 +3,8 @@ import type { Db } from "@paperclipai/db";
 import {
   activityLog,
   agents,
+  featurePriorityEvents,
+  features,
   harnessFindings,
   harnessRuns,
   heartbeatRuns,
@@ -12,10 +14,12 @@ import {
 } from "@paperclipai/db";
 import type {
   AutoMergeCandidate,
+  CreateFeature,
   CreateHarnessFinding,
   CreateHarnessRun,
   CreateVerificationRun,
   UpdateHarnessFinding,
+  UpdateFeature,
   UpdateRepoLock,
   UpsertRepoLock,
 } from "@paperclipai/shared";
@@ -213,6 +217,89 @@ export function deliveryControlService(db: Db) {
       .from(repoLocks)
       .where(eq(repoLocks.companyId, companyId))
       .orderBy(repoLocks.repo);
+  }
+
+  function listFeatures(companyId: string) {
+    return db
+      .select()
+      .from(features)
+      .where(eq(features.companyId, companyId))
+      .orderBy(features.priorityRank, desc(features.updatedAt), features.title);
+  }
+
+  function getFeature(id: string) {
+    return db.select().from(features).where(eq(features.id, id)).then((rows) => rows[0] ?? null);
+  }
+
+  async function createFeature(companyId: string, input: CreateFeature) {
+    return db
+      .insert(features)
+      .values({
+        companyId,
+        featureId: input.featureId,
+        title: input.title,
+        sourceTeam: input.sourceTeam,
+        intakeStatus: input.intakeStatus,
+        priorityRank: input.priorityRank,
+        pmBrief: input.pmBrief ?? {},
+        whyNow: input.whyNow,
+        impactEstimate: input.impactEstimate,
+        effortEstimate: input.effortEstimate,
+        riskLevel: input.riskLevel,
+        productArea: input.productArea,
+        repo: input.repo,
+        rootIssueId: input.rootIssueId,
+        deliveryState: input.deliveryState,
+        requiredEvidence: input.requiredEvidence ?? [],
+        terminalEvidence: input.terminalEvidence,
+        nextAction: input.nextAction,
+        ownerAgentId: input.ownerAgentId,
+      })
+      .returning()
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function updateFeature(id: string, input: UpdateFeature, changedBy: string | null = null) {
+    const existing = await db.select().from(features).where(eq(features.id, id)).then((rows) => rows[0] ?? null);
+    if (!existing) return null;
+    const patch = cleanUndefined({
+      title: input.title,
+      sourceTeam: input.sourceTeam,
+      intakeStatus: input.intakeStatus,
+      priorityRank: input.priorityRank,
+      pmBrief: input.pmBrief,
+      whyNow: input.whyNow,
+      impactEstimate: input.impactEstimate,
+      effortEstimate: input.effortEstimate,
+      riskLevel: input.riskLevel,
+      productArea: input.productArea,
+      repo: input.repo,
+      rootIssueId: input.rootIssueId,
+      deliveryState: input.deliveryState,
+      requiredEvidence: input.requiredEvidence,
+      terminalEvidence: input.terminalEvidence,
+      nextAction: input.nextAction,
+      ownerAgentId: input.ownerAgentId,
+      updatedAt: new Date(),
+    });
+    const updated = await db
+      .update(features)
+      .set(patch)
+      .where(eq(features.id, id))
+      .returning()
+      .then((rows) => rows[0] ?? null);
+    if (updated && (input.priorityRank !== undefined || input.intakeStatus !== undefined)) {
+      await db.insert(featurePriorityEvents).values({
+        companyId: existing.companyId,
+        featureId: existing.id,
+        fromRank: existing.priorityRank,
+        toRank: input.priorityRank ?? existing.priorityRank,
+        changedBy,
+        previousIntakeStatus: existing.intakeStatus,
+        newIntakeStatus: input.intakeStatus ?? existing.intakeStatus,
+      });
+    }
+    return updated;
   }
 
   async function listAutoMergeCandidates(companyId: string): Promise<AutoMergeCandidate[]> {
@@ -519,6 +606,10 @@ export function deliveryControlService(db: Db) {
 
   return {
     listRepoLocks,
+    listFeatures,
+    getFeature,
+    createFeature,
+    updateFeature,
     listAgentThroughput,
     listAutoMergeCandidates,
     getRepoLock,

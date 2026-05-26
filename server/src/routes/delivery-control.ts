@@ -3,7 +3,9 @@ import type { Db } from "@paperclipai/db";
 import {
   createHarnessFindingSchema,
   createHarnessRunSchema,
+  createFeatureSchema,
   createVerificationRunSchema,
+  updateFeatureSchema,
   updateHarnessFindingSchema,
   updateRepoLockSchema,
   upsertRepoLockSchema,
@@ -26,6 +28,63 @@ export function deliveryControlRoutes(db: Db) {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     res.json(await svc.listAgentThroughput(companyId));
+  });
+
+  router.get("/companies/:companyId/features", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await svc.listFeatures(companyId));
+  });
+
+  router.post("/companies/:companyId/features", validate(createFeatureSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const actor = getActorInfo(req);
+    const feature = await svc.createFeature(companyId, req.body);
+    if (!feature) {
+      res.status(422).json({ error: "Invalid feature payload" });
+      return;
+    }
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "delivery.feature_created",
+      entityType: "feature",
+      entityId: feature.id,
+      details: { featureId: feature.featureId, intakeStatus: feature.intakeStatus, priorityRank: feature.priorityRank },
+    });
+    res.status(201).json(feature);
+  });
+
+  router.patch("/features/:id", validate(updateFeatureSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const existing = await svc.getFeature(id);
+    if (!existing) {
+      res.status(404).json({ error: "Feature not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+    const actor = getActorInfo(req);
+    const feature = await svc.updateFeature(id, req.body, actor.actorId ?? actor.agentId ?? null);
+    if (!feature) {
+      res.status(404).json({ error: "Feature not found" });
+      return;
+    }
+    await logActivity(db, {
+      companyId: feature.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "delivery.feature_updated",
+      entityType: "feature",
+      entityId: feature.id,
+      details: { changedKeys: Object.keys(req.body).sort(), intakeStatus: feature.intakeStatus, priorityRank: feature.priorityRank },
+    });
+    res.json(feature);
   });
 
   router.get("/companies/:companyId/auto-merge-candidates", async (req, res) => {

@@ -1,6 +1,9 @@
 import type {
   BlockerType,
   DeliveryState,
+  FeatureIntakeStatus,
+  FeatureRiskLevel,
+  FeatureSourceTeam,
   HarnessFindingSeverity,
   HarnessFindingStatus,
   HarnessRunStatus,
@@ -107,6 +110,44 @@ export interface AgentThroughput {
   blockedRuns24h: number;
   activityEvents24h: number;
   lastRunAt: Date | null;
+}
+
+export interface Feature {
+  id: string;
+  companyId: string;
+  featureId: string;
+  title: string;
+  sourceTeam: FeatureSourceTeam;
+  intakeStatus: FeatureIntakeStatus;
+  priorityRank: number | null;
+  pmBrief: Record<string, unknown>;
+  whyNow: string | null;
+  impactEstimate: string | null;
+  effortEstimate: string | null;
+  riskLevel: FeatureRiskLevel;
+  productArea: string;
+  repo: IssueSurface | string | null;
+  rootIssueId: string | null;
+  deliveryState: DeliveryState;
+  requiredEvidence: string[];
+  terminalEvidence: Record<string, unknown> | null;
+  nextAction: string | null;
+  ownerAgentId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface FeaturePriorityEvent {
+  id: string;
+  companyId: string;
+  featureId: string;
+  fromRank: number | null;
+  toRank: number | null;
+  changedBy: string | null;
+  reason: string | null;
+  previousIntakeStatus: FeatureIntakeStatus | null;
+  newIntakeStatus: FeatureIntakeStatus | null;
+  createdAt: Date;
 }
 
 export interface AutoMergeCandidate {

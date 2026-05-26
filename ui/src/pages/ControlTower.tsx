@@ -18,6 +18,7 @@ import type {
   Agent,
   AgentThroughput,
   AutoMergeCandidate,
+  Feature,
   HarnessFinding,
   HarnessRun,
   Issue,
@@ -231,18 +232,41 @@ function BenjaminRequiredPanel({ issues, agentsById }: { issues: Issue[]; agents
   );
 }
 
-function FeaturesPanel({ issues }: { issues: Issue[] }) {
-  const features = issues
+function FeaturesPanel({ features, issues }: { features: Feature[]; issues: Issue[] }) {
+  const issueFeatures = issues
     .filter((issue) => issue.category === "feature" && isOpenIssue(issue))
     .sort(sortByUpdatedDesc)
     .slice(0, 8);
+  const visibleFeatures = features
+    .slice()
+    .sort((a, b) => (a.priorityRank ?? 9999) - (b.priorityRank ?? 9999) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .slice(0, 10);
   return (
     <Panel title="Features" icon={ClipboardCheck}>
-      {features.length === 0 ? (
+      {visibleFeatures.length === 0 && issueFeatures.length === 0 ? (
         <EmptyPanel text="No active features" />
       ) : (
         <div className="space-y-2">
-          {features.map((issue) => (
+          {visibleFeatures.map((feature) => (
+            <div key={feature.id} className="border border-border px-3 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs text-primary">{feature.featureId}</span>
+                {feature.priorityRank !== null ? <MiniPill>#{feature.priorityRank}</MiniPill> : null}
+                <MiniPill tone={statusTone(feature.intakeStatus)}>{formatLabel(feature.intakeStatus)}</MiniPill>
+                <MiniPill tone={statusTone(feature.deliveryState)}>{formatLabel(feature.deliveryState)}</MiniPill>
+                <MiniPill>{formatLabel(feature.riskLevel)}</MiniPill>
+              </div>
+              <div className="mt-2 line-clamp-1 text-sm font-medium">{feature.title}</div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>{formatLabel(feature.productArea)}</span>
+                {feature.repo ? <span>{feature.repo}</span> : null}
+                {feature.impactEstimate ? <span>{feature.impactEstimate}</span> : null}
+                {feature.effortEstimate ? <span>{feature.effortEstimate}</span> : null}
+              </div>
+              {feature.nextAction ? <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">{feature.nextAction}</div> : null}
+            </div>
+          ))}
+          {visibleFeatures.length === 0 ? issueFeatures.map((issue) => (
             <Link key={issue.id} to={issueUrl(issue)} className="block border border-border px-3 py-3 hover:bg-accent/40">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs text-primary">{issue.identifier ?? issue.id.slice(0, 8)}</span>
@@ -252,7 +276,7 @@ function FeaturesPanel({ issues }: { issues: Issue[] }) {
               <div className="mt-2 line-clamp-1 text-sm font-medium">{issue.title}</div>
               {issue.nextAction ? <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">{issue.nextAction}</div> : null}
             </Link>
-          ))}
+          )) : null}
         </div>
       )}
     </Panel>
@@ -489,6 +513,11 @@ export function ControlTower() {
     queryFn: () => deliveryControlApi.listAgentThroughput(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  const featuresQuery = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.deliveryControl.features(selectedCompanyId) : ["delivery-control", "features", "__disabled__"],
+    queryFn: () => deliveryControlApi.listFeatures(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
   const autoMergeCandidatesQuery = useQuery({
     queryKey: selectedCompanyId ? queryKeys.deliveryControl.autoMergeCandidates(selectedCompanyId) : ["delivery-control", "auto-merge-candidates", "__disabled__"],
     queryFn: () => deliveryControlApi.listAutoMergeCandidates(selectedCompanyId!),
@@ -523,6 +552,7 @@ export function ControlTower() {
   const isLoading =
     repoLocksQuery.isLoading ||
     agentThroughputQuery.isLoading ||
+    featuresQuery.isLoading ||
     autoMergeCandidatesQuery.isLoading ||
     verificationRunsQuery.isLoading ||
     harnessRunsQuery.isLoading ||
@@ -533,6 +563,7 @@ export function ControlTower() {
   const error =
     repoLocksQuery.error ||
     agentThroughputQuery.error ||
+    featuresQuery.error ||
     autoMergeCandidatesQuery.error ||
     verificationRunsQuery.error ||
     harnessRunsQuery.error ||
@@ -542,6 +573,7 @@ export function ControlTower() {
 
   const repoLocks = repoLocksQuery.data ?? [];
   const agentThroughput = agentThroughputQuery.data ?? [];
+  const features = featuresQuery.data ?? [];
   const autoMergeCandidates = autoMergeCandidatesQuery.data ?? [];
   const verificationRuns = verificationRunsQuery.data ?? [];
   const harnessRuns = harnessRunsQuery.data ?? [];
@@ -596,7 +628,7 @@ export function ControlTower() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
-        <FeaturesPanel issues={activeIssues} />
+        <FeaturesPanel features={features} issues={activeIssues} />
         <EvidencePanel runs={verificationRuns} />
         <HarnessPanel runs={harnessRuns} findings={harnessFindings} />
       </div>

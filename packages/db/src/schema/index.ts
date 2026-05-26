@@ -30,6 +30,8 @@ export { projectGoals } from "./project_goals.js";
 export { goals } from "./goals.js";
 export { issues } from "./issues.js";
 export { issueDeliveryProofs } from "./issue_delivery_proofs.js";
+export { features } from "./features.js";
+export { featurePriorityEvents } from "./feature_priority_events.js";
 export { repoLocks } from "./repo_locks.js";
 export { verificationRuns } from "./verification_runs.js";
 export { harnessRuns } from "./harness_runs.js";

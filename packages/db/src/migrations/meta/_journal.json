@@ -610,6 +610,13 @@
       "when": 1779811200000,
       "tag": "0086_control_tower_primitives",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1779814800000,
+      "tag": "0087_control_tower_features",
+      "breakpoints": true
     }
   ]
 }

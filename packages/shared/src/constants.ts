@@ -195,6 +195,32 @@ export const DELIVERY_STATES = [
 ] as const;
 export type DeliveryState = (typeof DELIVERY_STATES)[number];
 
+export const FEATURE_SOURCE_TEAMS = [
+  "watch",
+  "pm",
+  "support",
+  "harness",
+  "benjamin",
+  "ops",
+] as const;
+export type FeatureSourceTeam = (typeof FEATURE_SOURCE_TEAMS)[number];
+
+export const FEATURE_INTAKE_STATUSES = [
+  "proposed",
+  "pm_framing",
+  "ready_for_priority",
+  "queued",
+  "selected",
+  "in_delivery",
+  "delivered",
+  "rejected",
+  "parked",
+] as const;
+export type FeatureIntakeStatus = (typeof FEATURE_INTAKE_STATUSES)[number];
+
+export const FEATURE_RISK_LEVELS = ["low", "medium", "high"] as const;
+export type FeatureRiskLevel = (typeof FEATURE_RISK_LEVELS)[number];
+
 export const BLOCKER_TYPES = [
   "repo_dirty",
   "branch_stale",
