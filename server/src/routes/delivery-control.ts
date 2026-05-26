@@ -22,6 +22,12 @@ export function deliveryControlRoutes(db: Db) {
     res.json(await svc.listRepoLocks(companyId));
   });
 
+  router.get("/companies/:companyId/agent-throughput", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await svc.listAgentThroughput(companyId));
+  });
+
   router.post("/companies/:companyId/repo-locks", validate(upsertRepoLockSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);

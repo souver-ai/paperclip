@@ -3,6 +3,7 @@ import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  Activity,
   CheckCircle2,
   CircleDot,
   ClipboardCheck,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import type {
   Agent,
+  AgentThroughput,
   HarnessFinding,
   HarnessRun,
   Issue,
@@ -315,6 +317,79 @@ function HarnessPanel({ runs, findings }: { runs: HarnessRun[]; findings: Harnes
   );
 }
 
+function AgentThroughputPanel({ rows }: { rows: AgentThroughput[] }) {
+  const activeRows = rows
+    .filter((row) =>
+      row.assignedOpenIssues > 0 ||
+      row.runs24h > 0 ||
+      row.activityEvents24h > 0 ||
+      row.status !== "idle",
+    )
+    .slice(0, 8);
+  return (
+    <Panel title="Agents & Throughput" icon={Activity}>
+      {activeRows.length === 0 ? (
+        <EmptyPanel text="No active agent throughput" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead className="border-b border-border text-xs text-muted-foreground">
+              <tr>
+                <th className="px-2 py-2 font-medium">Agent</th>
+                <th className="px-2 py-2 font-medium">Open</th>
+                <th className="px-2 py-2 font-medium">Runs 24h</th>
+                <th className="px-2 py-2 font-medium">Signal</th>
+                <th className="px-2 py-2 font-medium">7d flow</th>
+                <th className="px-2 py-2 font-medium">Last run</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeRows.map((row) => {
+                const pressure = row.assignedBlockedIssues + row.blockedRuns24h;
+                const tone: PanelTone = pressure > 0 ? "danger" : row.planOnlyRuns24h > row.productiveRuns24h ? "warning" : "success";
+                return (
+                  <tr key={row.agentId} className="border-b border-border/70 last:border-0">
+                    <td className="max-w-[220px] px-2 py-3">
+                      <div className="truncate font-medium">{row.name}</div>
+                      <div className="truncate text-xs text-muted-foreground">{formatLabel(row.role)} · {formatLabel(row.status)}</div>
+                    </td>
+                    <td className="px-2 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        <MiniPill>{row.assignedOpenIssues}</MiniPill>
+                        {row.assignedBlockedIssues > 0 ? <MiniPill tone="danger">{row.assignedBlockedIssues} blocked</MiniPill> : null}
+                        {row.assignedInReviewIssues > 0 ? <MiniPill tone="warning">{row.assignedInReviewIssues} review</MiniPill> : null}
+                      </div>
+                    </td>
+                    <td className="px-2 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        <MiniPill>{row.runs24h}</MiniPill>
+                        {row.failedRuns24h > 0 ? <MiniPill tone="danger">{row.failedRuns24h} failed</MiniPill> : null}
+                      </div>
+                    </td>
+                    <td className="px-2 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        <MiniPill tone={tone}>{row.productiveRuns24h} useful</MiniPill>
+                        {row.planOnlyRuns24h > 0 ? <MiniPill tone="warning">{row.planOnlyRuns24h} plan-only</MiniPill> : null}
+                        {row.blockedRuns24h > 0 ? <MiniPill tone="danger">{row.blockedRuns24h} blocked</MiniPill> : null}
+                      </div>
+                    </td>
+                    <td className="px-2 py-3 text-muted-foreground">
+                      {row.createdIssues7d} created · {row.completedIssues7d} done
+                    </td>
+                    <td className="px-2 py-3 text-muted-foreground">
+                      {row.lastRunAt ? relativeTime(row.lastRunAt) : row.lastHeartbeatAt ? relativeTime(row.lastHeartbeatAt) : "never"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export function ControlTower() {
   const { selectedCompanyId, companies } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -326,6 +401,11 @@ export function ControlTower() {
   const repoLocksQuery = useQuery({
     queryKey: selectedCompanyId ? queryKeys.deliveryControl.repoLocks(selectedCompanyId) : ["delivery-control", "repo-locks", "__disabled__"],
     queryFn: () => deliveryControlApi.listRepoLocks(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const agentThroughputQuery = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.deliveryControl.agentThroughput(selectedCompanyId) : ["delivery-control", "agent-throughput", "__disabled__"],
+    queryFn: () => deliveryControlApi.listAgentThroughput(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
   const verificationRunsQuery = useQuery({
@@ -356,6 +436,7 @@ export function ControlTower() {
 
   const isLoading =
     repoLocksQuery.isLoading ||
+    agentThroughputQuery.isLoading ||
     verificationRunsQuery.isLoading ||
     harnessRunsQuery.isLoading ||
     harnessFindingsQuery.isLoading ||
@@ -364,6 +445,7 @@ export function ControlTower() {
 
   const error =
     repoLocksQuery.error ||
+    agentThroughputQuery.error ||
     verificationRunsQuery.error ||
     harnessRunsQuery.error ||
     harnessFindingsQuery.error ||
@@ -371,6 +453,7 @@ export function ControlTower() {
     agentsQuery.error;
 
   const repoLocks = repoLocksQuery.data ?? [];
+  const agentThroughput = agentThroughputQuery.data ?? [];
   const verificationRuns = verificationRunsQuery.data ?? [];
   const harnessRuns = harnessRunsQuery.data ?? [];
   const harnessFindings = harnessFindingsQuery.data ?? [];
@@ -428,6 +511,8 @@ export function ControlTower() {
         <EvidencePanel runs={verificationRuns} />
         <HarnessPanel runs={harnessRuns} findings={harnessFindings} />
       </div>
+
+      <AgentThroughputPanel rows={agentThroughput} />
     </div>
   );
 }

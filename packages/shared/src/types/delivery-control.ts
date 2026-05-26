@@ -87,3 +87,24 @@ export interface HarnessFinding {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface AgentThroughput {
+  agentId: string;
+  name: string;
+  role: string;
+  status: string;
+  lastHeartbeatAt: Date | null;
+  assignedOpenIssues: number;
+  assignedBlockedIssues: number;
+  assignedInReviewIssues: number;
+  createdIssues7d: number;
+  completedIssues7d: number;
+  runs24h: number;
+  successfulRuns24h: number;
+  failedRuns24h: number;
+  productiveRuns24h: number;
+  planOnlyRuns24h: number;
+  blockedRuns24h: number;
+  activityEvents24h: number;
+  lastRunAt: Date | null;
+}

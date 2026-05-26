@@ -2,6 +2,7 @@ import type {
   CreateHarnessFinding,
   CreateHarnessRun,
   CreateVerificationRun,
+  AgentThroughput,
   HarnessFinding,
   HarnessRun,
   RepoLock,
@@ -14,6 +15,8 @@ import { api } from "./client";
 
 export const deliveryControlApi = {
   listRepoLocks: (companyId: string) => api.get<RepoLock[]>(`/companies/${companyId}/repo-locks`),
+  listAgentThroughput: (companyId: string) =>
+    api.get<AgentThroughput[]>(`/companies/${companyId}/agent-throughput`),
   upsertRepoLock: (companyId: string, data: UpsertRepoLock) =>
     api.post<RepoLock>(`/companies/${companyId}/repo-locks`, data),
   updateRepoLock: (id: string, data: UpdateRepoLock) => api.patch<RepoLock>(`/repo-locks/${id}`, data),
