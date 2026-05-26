@@ -132,6 +132,7 @@ describe("buildAutoMergeCandidates", () => {
         finishedAt: null,
         createdAt: new Date("2026-05-26T01:00:00.000Z"),
       })],
+      new Date("2026-05-26T01:10:00.000Z"),
     );
 
     expect(candidate).toMatchObject({
@@ -191,6 +192,7 @@ describe("buildAutoMergeCandidates", () => {
         finishedAt: null,
         createdAt: new Date("2026-05-26T00:00:00.000Z"),
       })],
+      new Date("2026-05-26T00:45:00.000Z"),
     );
 
     expect(candidate).toMatchObject({

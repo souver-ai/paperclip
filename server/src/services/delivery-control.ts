@@ -577,6 +577,7 @@ export function buildAutoMergeCandidates(
   issueRows: IssueRow[],
   lockRows: RepoLockRow[],
   verificationRows: VerificationRunRow[],
+  now = new Date(),
 ): AutoMergeCandidate[] {
   const locksById = new Map(lockRows.map((lock) => [lock.id, lock]));
   const locksByIssueId = new Map(lockRows.filter((lock) => lock.activeIssueId).map((lock) => [lock.activeIssueId!, lock]));
@@ -611,9 +612,9 @@ export function buildAutoMergeCandidates(
       const repo = pickRepo(issue, lock);
       const branch = pickBranch(lock, runs);
       const prUrl = pickPrUrl(lock, runs);
-      const verificationTail = classifyVerificationTail(issue, repo, runs);
+      const verificationTail = classifyVerificationTail(issue, repo, runs, now);
       const implementationSlot = classifyImplementationSlot(issue, repo, lock, verificationTail);
-      const checkAgeMinutes = targetCheckAgeMinutes(latestRuns);
+      const checkAgeMinutes = targetCheckAgeMinutes(latestRuns, now);
       const reasons: string[] = [];
 
       if (!isOpenIssueStatus(issue.status)) reasons.push("issue_closed");
