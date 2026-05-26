@@ -13,6 +13,7 @@ import {
   Repeat,
   GitBranch,
   Settings,
+  RadioTower,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink } from "@/lib/router";
@@ -82,6 +83,7 @@ export function Sidebar() {
             <span className="truncate">New Issue</span>
           </button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem to="/control-tower" label="Control Tower" icon={RadioTower} />
           <SidebarNavItem
             to="/inbox"
             label="Inbox"
