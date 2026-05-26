@@ -108,3 +108,26 @@ export interface AgentThroughput {
   activityEvents24h: number;
   lastRunAt: Date | null;
 }
+
+export interface AutoMergeCandidate {
+  issueId: string;
+  identifier: string | null;
+  title: string;
+  status: string;
+  deliveryState: DeliveryState;
+  repo: IssueSurface | string | null;
+  branch: string | null;
+  prUrl: string | null;
+  repoLockId: string | null;
+  repoLockState: RepoLockState | null;
+  blockerType: BlockerType | null;
+  benjaminRequired: boolean;
+  storedAutoMergeEligible: boolean;
+  eligible: boolean;
+  reasons: string[];
+  passedVerificationCount: number;
+  failedVerificationCount: number;
+  latestVerificationAt: Date | null;
+  securityStatus: VerificationRunStatus | "not_recorded" | null;
+  nextAction: string | null;
+}

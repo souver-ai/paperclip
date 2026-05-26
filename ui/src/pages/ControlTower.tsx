@@ -8,6 +8,7 @@ import {
   CircleDot,
   ClipboardCheck,
   FlaskConical,
+  GitMerge,
   GitPullRequest,
   RadioTower,
   ShieldAlert,
@@ -16,6 +17,7 @@ import {
 import type {
   Agent,
   AgentThroughput,
+  AutoMergeCandidate,
   HarnessFinding,
   HarnessRun,
   Issue,
@@ -390,6 +392,85 @@ function AgentThroughputPanel({ rows }: { rows: AgentThroughput[] }) {
   );
 }
 
+function AutoMergePanel({ candidates }: { candidates: AutoMergeCandidate[] }) {
+  const visibleCandidates = candidates.slice(0, 8);
+  return (
+    <Panel title="Auto-Merge Candidates" icon={GitMerge}>
+      {visibleCandidates.length === 0 ? (
+        <EmptyPanel text="No auto-merge candidates" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead className="border-b border-border text-xs text-muted-foreground">
+              <tr>
+                <th className="px-2 py-2 font-medium">Issue</th>
+                <th className="px-2 py-2 font-medium">Repo</th>
+                <th className="px-2 py-2 font-medium">PR</th>
+                <th className="px-2 py-2 font-medium">Evidence</th>
+                <th className="px-2 py-2 font-medium">Verdict</th>
+                <th className="px-2 py-2 font-medium">Next action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleCandidates.map((candidate) => (
+                <tr key={candidate.issueId} className="border-b border-border/70 last:border-0">
+                  <td className="max-w-[260px] px-2 py-3">
+                    <Link to={issueUrl({ id: candidate.issueId, identifier: candidate.identifier })} className="font-mono text-xs text-primary hover:underline">
+                      {candidate.identifier ?? candidate.issueId.slice(0, 8)}
+                    </Link>
+                    <div className="mt-1 truncate font-medium">{candidate.title}</div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      <StatusBadge status={candidate.status} />
+                      <MiniPill tone={statusTone(candidate.deliveryState)}>{formatLabel(candidate.deliveryState)}</MiniPill>
+                    </div>
+                  </td>
+                  <td className="px-2 py-3">
+                    <div className="font-medium">{candidate.repo ?? "unknown"}</div>
+                    {candidate.repoLockState ? (
+                      <div className="mt-1"><MiniPill tone={statusTone(candidate.repoLockState)}>{formatLabel(candidate.repoLockState)}</MiniPill></div>
+                    ) : null}
+                  </td>
+                  <td className="max-w-[180px] px-2 py-3">
+                    <div className="truncate font-mono text-xs" title={candidate.branch ?? undefined}>{candidate.branch ?? "none"}</div>
+                    {candidate.prUrl ? (
+                      <a href={candidate.prUrl} className="text-xs text-primary hover:underline" target="_blank" rel="noreferrer">
+                        PR
+                      </a>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">missing</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      <MiniPill tone={candidate.passedVerificationCount > 0 ? "success" : "warning"}>{candidate.passedVerificationCount} pass</MiniPill>
+                      {candidate.failedVerificationCount > 0 ? <MiniPill tone="danger">{candidate.failedVerificationCount} blocked</MiniPill> : null}
+                      {candidate.securityStatus ? <MiniPill tone={candidate.securityStatus === "pass" || candidate.securityStatus === "not_recorded" ? "success" : "danger"}>sec {formatLabel(candidate.securityStatus)}</MiniPill> : null}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {candidate.latestVerificationAt ? relativeTime(candidate.latestVerificationAt) : "no run"}
+                    </div>
+                  </td>
+                  <td className="px-2 py-3">
+                    <MiniPill tone={candidate.eligible ? "success" : "warning"}>
+                      {candidate.eligible ? "eligible" : `${candidate.reasons.length} gate${candidate.reasons.length > 1 ? "s" : ""}`}
+                    </MiniPill>
+                    {candidate.storedAutoMergeEligible && !candidate.eligible ? (
+                      <div className="mt-1 text-xs text-amber-600 dark:text-amber-300">flag mismatch</div>
+                    ) : null}
+                  </td>
+                  <td className="max-w-[280px] px-2 py-3">
+                    <div className="line-clamp-2 text-muted-foreground">{candidate.nextAction ?? candidate.reasons.join(", ")}</div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export function ControlTower() {
   const { selectedCompanyId, companies } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -406,6 +487,11 @@ export function ControlTower() {
   const agentThroughputQuery = useQuery({
     queryKey: selectedCompanyId ? queryKeys.deliveryControl.agentThroughput(selectedCompanyId) : ["delivery-control", "agent-throughput", "__disabled__"],
     queryFn: () => deliveryControlApi.listAgentThroughput(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const autoMergeCandidatesQuery = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.deliveryControl.autoMergeCandidates(selectedCompanyId) : ["delivery-control", "auto-merge-candidates", "__disabled__"],
+    queryFn: () => deliveryControlApi.listAutoMergeCandidates(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
   const verificationRunsQuery = useQuery({
@@ -437,6 +523,7 @@ export function ControlTower() {
   const isLoading =
     repoLocksQuery.isLoading ||
     agentThroughputQuery.isLoading ||
+    autoMergeCandidatesQuery.isLoading ||
     verificationRunsQuery.isLoading ||
     harnessRunsQuery.isLoading ||
     harnessFindingsQuery.isLoading ||
@@ -446,6 +533,7 @@ export function ControlTower() {
   const error =
     repoLocksQuery.error ||
     agentThroughputQuery.error ||
+    autoMergeCandidatesQuery.error ||
     verificationRunsQuery.error ||
     harnessRunsQuery.error ||
     harnessFindingsQuery.error ||
@@ -454,6 +542,7 @@ export function ControlTower() {
 
   const repoLocks = repoLocksQuery.data ?? [];
   const agentThroughput = agentThroughputQuery.data ?? [];
+  const autoMergeCandidates = autoMergeCandidatesQuery.data ?? [];
   const verificationRuns = verificationRunsQuery.data ?? [];
   const harnessRuns = harnessRunsQuery.data ?? [];
   const harnessFindings = harnessFindingsQuery.data ?? [];
@@ -469,7 +558,7 @@ export function ControlTower() {
   const activeIssues = issues.filter(isOpenIssue);
   const lockedRepos = repoLocks.filter((lock) => lock.state !== "free").length;
   const failedEvidence = verificationRuns.filter((run) => run.status === "fail" || run.status === "blocked").length;
-  const openHarnessFindings = harnessFindings.filter((finding) => !["resolved", "waived"].includes(finding.status)).length;
+  const eligibleAutoMergeCandidates = autoMergeCandidates.filter((candidate) => candidate.eligible).length;
 
   if (!selectedCompanyId) {
     return companies.length === 0
@@ -498,7 +587,7 @@ export function ControlTower() {
         <TowerMetric label="Benjamin Required" value={benjaminIssues.length} icon={ShieldAlert} tone={benjaminIssues.length > 0 ? "danger" : "success"} />
         <TowerMetric label="Locked Repos" value={lockedRepos} icon={GitPullRequest} tone={lockedRepos > 0 ? "warning" : "success"} />
         <TowerMetric label="Failed Evidence" value={failedEvidence} icon={CircleDot} tone={failedEvidence > 0 ? "danger" : "success"} />
-        <TowerMetric label="Harness Findings" value={openHarnessFindings} icon={FlaskConical} tone={openHarnessFindings > 0 ? "warning" : "success"} />
+        <TowerMetric label="Auto-Merge Ready" value={eligibleAutoMergeCandidates} icon={GitMerge} tone={eligibleAutoMergeCandidates > 0 ? "warning" : "success"} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
@@ -511,6 +600,8 @@ export function ControlTower() {
         <EvidencePanel runs={verificationRuns} />
         <HarnessPanel runs={harnessRuns} findings={harnessFindings} />
       </div>
+
+      <AutoMergePanel candidates={autoMergeCandidates} />
 
       <AgentThroughputPanel rows={agentThroughput} />
     </div>

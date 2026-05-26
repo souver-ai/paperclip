@@ -11,6 +11,7 @@ import {
   verificationRuns,
 } from "@paperclipai/db";
 import type {
+  AutoMergeCandidate,
   CreateHarnessFinding,
   CreateHarnessRun,
   CreateVerificationRun,
@@ -18,6 +19,35 @@ import type {
   UpdateRepoLock,
   UpsertRepoLock,
 } from "@paperclipai/shared";
+
+const AUTO_MERGE_READY_STATES = new Set(["merge_ready"]);
+const AUTO_MERGE_BLOCKING_REPO_STATES = new Set([
+  "queued_repo_gate",
+  "locked_cto",
+  "blocked_needs_benjamin",
+]);
+const AUTO_MERGE_SENSITIVE_TERMS = [
+  "dashboard",
+  "auth",
+  "sso",
+  "rls",
+  "migration",
+  "secret",
+  "credential",
+  "provider",
+  "infra",
+  "production",
+  "deploy",
+  "release",
+  "packaging",
+  "stripe",
+  "billing",
+  "supabase",
+];
+
+type IssueRow = typeof issues.$inferSelect;
+type RepoLockRow = typeof repoLocks.$inferSelect;
+type VerificationRunRow = typeof verificationRuns.$inferSelect;
 
 function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
@@ -34,6 +64,148 @@ function cleanUndefined<T extends Record<string, unknown>>(input: T): Partial<T>
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as Partial<T>;
 }
 
+function isOpenIssueStatus(status: string) {
+  return status !== "done" && status !== "cancelled";
+}
+
+function hasSensitiveAutoMergeSurface(issue: IssueRow, repo: string | null) {
+  const surfaces = Array.isArray(issue.surfaces) ? issue.surfaces : [];
+  const haystack = [
+    repo,
+    issue.title,
+    issue.description,
+    ...surfaces,
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  return AUTO_MERGE_SENSITIVE_TERMS.some((term) => haystack.includes(term));
+}
+
+function newestVerificationDate(runs: VerificationRunRow[]) {
+  let newest: Date | null = null;
+  for (const run of runs) {
+    const candidate = run.finishedAt ?? run.startedAt ?? run.createdAt ?? null;
+    if (!candidate) continue;
+    if (!newest || candidate.getTime() > newest.getTime()) newest = candidate;
+  }
+  return newest;
+}
+
+function latestVerificationByType(runs: VerificationRunRow[]) {
+  const latest = new Map<string, VerificationRunRow>();
+  const sorted = [...runs].sort((a, b) => {
+    const aTime = (a.finishedAt ?? a.startedAt ?? a.createdAt).getTime();
+    const bTime = (b.finishedAt ?? b.startedAt ?? b.createdAt).getTime();
+    return bTime - aTime;
+  });
+  for (const run of sorted) {
+    if (!latest.has(run.type)) latest.set(run.type, run);
+  }
+  return latest;
+}
+
+function pickRepo(issue: IssueRow, lock: RepoLockRow | null): string | null {
+  if (lock?.repo) return lock.repo;
+  const surfaces = Array.isArray(issue.surfaces) ? issue.surfaces.filter((surface) => surface !== "external") : [];
+  return surfaces[0] ?? null;
+}
+
+function pickBranch(lock: RepoLockRow | null, runs: VerificationRunRow[]) {
+  return lock?.branch ?? runs.find((run) => run.branch)?.branch ?? null;
+}
+
+function pickPrUrl(lock: RepoLockRow | null, runs: VerificationRunRow[]) {
+  return lock?.prUrl ?? runs.find((run) => run.prUrl)?.prUrl ?? null;
+}
+
+export function buildAutoMergeCandidates(
+  issueRows: IssueRow[],
+  lockRows: RepoLockRow[],
+  verificationRows: VerificationRunRow[],
+): AutoMergeCandidate[] {
+  const locksById = new Map(lockRows.map((lock) => [lock.id, lock]));
+  const locksByIssueId = new Map(lockRows.filter((lock) => lock.activeIssueId).map((lock) => [lock.activeIssueId!, lock]));
+  const verificationByIssueId = new Map<string, VerificationRunRow[]>();
+  for (const run of verificationRows) {
+    if (!run.issueId) continue;
+    const list = verificationByIssueId.get(run.issueId) ?? [];
+    list.push(run);
+    verificationByIssueId.set(run.issueId, list);
+  }
+
+  return issueRows
+    .filter((issue) =>
+      isOpenIssueStatus(issue.status) &&
+      (
+        issue.autoMergeEligible ||
+        issue.deliveryState === "merge_ready" ||
+        Boolean(issue.repoLockId) ||
+        locksByIssueId.has(issue.id)
+      ),
+    )
+    .map((issue) => {
+      const lock = (issue.repoLockId ? locksById.get(issue.repoLockId) : null) ?? locksByIssueId.get(issue.id) ?? null;
+      const runs = verificationByIssueId.get(issue.id) ?? [];
+      const latestByType = latestVerificationByType(runs);
+      const latestRuns = [...latestByType.values()];
+      const failedRuns = latestRuns.filter((run) => run.status !== "pass");
+      const passedRuns = latestRuns.filter((run) => run.status === "pass");
+      const securityRun = latestByType.get("security") ?? null;
+      const repo = pickRepo(issue, lock);
+      const branch = pickBranch(lock, runs);
+      const prUrl = pickPrUrl(lock, runs);
+      const reasons: string[] = [];
+
+      if (!isOpenIssueStatus(issue.status)) reasons.push("issue_closed");
+      if (issue.benjaminRequired) reasons.push("benjamin_required");
+      if (repo === null) reasons.push("missing_repo");
+      if (repo === "dashboard" || (Array.isArray(issue.surfaces) && issue.surfaces.includes("dashboard"))) {
+        reasons.push("dashboard_requires_benjamin");
+      }
+      if (hasSensitiveAutoMergeSurface(issue, repo)) reasons.push("sensitive_surface");
+      if (!AUTO_MERGE_READY_STATES.has(issue.deliveryState)) reasons.push("delivery_state_not_merge_ready");
+      if (!prUrl) reasons.push("missing_pr_url");
+      if (lock && AUTO_MERGE_BLOCKING_REPO_STATES.has(lock.state)) reasons.push("repo_lock_not_ready");
+      if (lock?.blockerType) reasons.push(`repo_blocker:${lock.blockerType}`);
+      if (issue.blockerType) reasons.push(`issue_blocker:${issue.blockerType}`);
+      if (failedRuns.length > 0) reasons.push("verification_not_green");
+      if (passedRuns.length === 0) reasons.push("verification_missing");
+      if (securityRun && securityRun.status !== "pass") reasons.push("security_not_green");
+
+      const uniqueReasons = [...new Set(reasons)];
+      return {
+        issueId: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        status: issue.status,
+        deliveryState: issue.deliveryState as AutoMergeCandidate["deliveryState"],
+        repo,
+        branch,
+        prUrl,
+        repoLockId: lock?.id ?? issue.repoLockId ?? null,
+        repoLockState: (lock?.state as AutoMergeCandidate["repoLockState"]) ?? null,
+        blockerType: (issue.blockerType as AutoMergeCandidate["blockerType"]) ?? (lock?.blockerType as AutoMergeCandidate["blockerType"]) ?? null,
+        benjaminRequired: issue.benjaminRequired,
+        storedAutoMergeEligible: issue.autoMergeEligible,
+        eligible: uniqueReasons.length === 0,
+        reasons: uniqueReasons,
+        passedVerificationCount: passedRuns.length,
+        failedVerificationCount: failedRuns.length,
+        latestVerificationAt: newestVerificationDate(runs),
+        securityStatus: securityRun ? (securityRun.status as AutoMergeCandidate["securityStatus"]) : "not_recorded",
+        nextAction: uniqueReasons.length === 0
+          ? "Ready for gated auto-merge outside dashboard."
+          : `Resolve: ${uniqueReasons.slice(0, 3).join(", ")}`,
+      };
+    })
+    .sort((a, b) => {
+      if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+      if (a.storedAutoMergeEligible !== b.storedAutoMergeEligible) return a.storedAutoMergeEligible ? -1 : 1;
+      return a.title.localeCompare(b.title);
+    });
+}
+
 export function deliveryControlService(db: Db) {
   function listRepoLocks(companyId: string) {
     return db
@@ -41,6 +213,27 @@ export function deliveryControlService(db: Db) {
       .from(repoLocks)
       .where(eq(repoLocks.companyId, companyId))
       .orderBy(repoLocks.repo);
+  }
+
+  async function listAutoMergeCandidates(companyId: string): Promise<AutoMergeCandidate[]> {
+    const [issueRows, lockRows, verificationRows] = await Promise.all([
+      db
+        .select()
+        .from(issues)
+        .where(eq(issues.companyId, companyId))
+        .orderBy(desc(issues.updatedAt)),
+      db
+        .select()
+        .from(repoLocks)
+        .where(eq(repoLocks.companyId, companyId)),
+      db
+        .select()
+        .from(verificationRuns)
+        .where(eq(verificationRuns.companyId, companyId))
+        .orderBy(desc(verificationRuns.finishedAt), desc(verificationRuns.createdAt)),
+    ]);
+
+    return buildAutoMergeCandidates(issueRows, lockRows, verificationRows);
   }
 
   async function listAgentThroughput(companyId: string) {
@@ -327,6 +520,7 @@ export function deliveryControlService(db: Db) {
   return {
     listRepoLocks,
     listAgentThroughput,
+    listAutoMergeCandidates,
     getRepoLock,
     upsertRepoLock,
     updateRepoLock,
