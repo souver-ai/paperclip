@@ -177,10 +177,12 @@ Start with least privilege where possible, and avoid exposing secrets in broad r
 
 ## 10. Minimal setup checklist
 
-1. Choose adapter (e.g. `claude_local`, `codex_local`, `opencode_local`, `hermes_local`, `cursor`, or `openclaw_gateway`). External plugins like `droid_local` are also available via the adapter manager.
+1. Choose adapter (e.g. `claude_local`, `codex_local`, `deepseek_platform`, `opencode_local`, `hermes_local`, `cursor`, or `openclaw_gateway`). External plugins like `droid_local` are also available via the adapter manager.
 2. Set `cwd` to the target workspace (for local adapters).
 3. Optionally add a prompt template (`promptTemplate`) or use the managed instructions bundle.
 4. Configure heartbeat policy (timer and/or assignment wakeups).
 5. Trigger a manual wakeup.
 6. Confirm run succeeds and session/token usage is recorded.
 7. Watch live updates and iterate prompt/config.
+
+For `deepseek_platform`, bind `DEEPSEEK_API_KEY` through Paperclip company secrets under `adapterConfig.env`. Do not store the raw key in `adapterConfig`; Paperclip resolves the binding server-side when the run starts and returns redacted config to clients.

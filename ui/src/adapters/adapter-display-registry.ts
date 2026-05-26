@@ -73,6 +73,12 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     icon: Code,
     recommended: true,
   },
+  deepseek_platform: {
+    label: "DeepSeek Platform",
+    description: "Direct DeepSeek API agent",
+    icon: Sparkles,
+    experimental: true,
+  },
   gemini_local: {
     label: "Gemini CLI",
     description: "Local Gemini agent",
