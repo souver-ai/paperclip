@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,9 +10,11 @@ import {
   CircleDot,
   ClipboardCheck,
   DatabaseZap,
+  Eye,
   FlaskConical,
   GitMerge,
   GitPullRequest,
+  PlayCircle,
   RadioTower,
   ShieldAlert,
   type LucideIcon,
@@ -34,6 +36,15 @@ import { issuesApi } from "../api/issues";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { StatusBadge } from "../components/StatusBadge";
+import { Button } from "../components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "../components/ui/sheet";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -267,6 +278,7 @@ function FeaturesPanel({
   backfillPending,
   onMoveFeature,
   movePending,
+  onOpenFeature,
 }: {
   features: Feature[];
   issues: Issue[];
@@ -274,6 +286,7 @@ function FeaturesPanel({
   backfillPending: boolean;
   onMoveFeature: (current: Feature, target: Feature, currentRank: number, targetRank: number) => void;
   movePending: boolean;
+  onOpenFeature: (feature: Feature) => void;
 }) {
   const issueFeatures = issues
     .filter((issue) => issue.category === "feature" && isOpenIssue(issue))
@@ -322,6 +335,11 @@ function FeaturesPanel({
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <IconButton
+                    title="Open feature brief"
+                    icon={Eye}
+                    onClick={() => onOpenFeature(feature)}
+                  />
+                  <IconButton
                     title="Move feature up"
                     icon={ArrowUp}
                     disabled={index === 0 || movePending}
@@ -359,6 +377,94 @@ function FeaturesPanel({
         </div>
       )}
     </Panel>
+  );
+}
+
+function FieldRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="border border-border px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm">{value}</div>
+    </div>
+  );
+}
+
+function renderBriefValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "none";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
+function FeatureDetailSheet({
+  feature,
+  open,
+  onOpenChange,
+  onSelectForDelivery,
+  selectPending,
+}: {
+  feature: Feature | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSelectForDelivery: (feature: Feature) => void;
+  selectPending: boolean;
+}) {
+  const briefEntries = feature ? Object.entries(feature.pmBrief ?? {}) : [];
+  const canSelect = feature
+    ? !["selected", "in_delivery", "delivered", "rejected", "parked"].includes(feature.intakeStatus)
+    : false;
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-xl">
+        <SheetHeader className="border-b border-border pr-10">
+          <div className="flex flex-wrap items-center gap-2">
+            {feature ? <span className="font-mono text-xs text-primary">{feature.featureId}</span> : null}
+            {feature ? <MiniPill tone={statusTone(feature.intakeStatus)}>{formatLabel(feature.intakeStatus)}</MiniPill> : null}
+            {feature ? <MiniPill tone={statusTone(feature.deliveryState)}>{formatLabel(feature.deliveryState)}</MiniPill> : null}
+          </div>
+          <SheetTitle>{feature?.title ?? "Feature"}</SheetTitle>
+          <SheetDescription>
+            {feature ? `${formatLabel(feature.productArea)}${feature.repo ? ` · ${feature.repo}` : ""}` : null}
+          </SheetDescription>
+        </SheetHeader>
+        {feature ? (
+          <div className="space-y-3 p-4">
+            <FieldRow label="Why now" value={feature.whyNow ?? "none"} />
+            <FieldRow label="Impact" value={feature.impactEstimate ?? "none"} />
+            <FieldRow label="Effort" value={feature.effortEstimate ?? "none"} />
+            <FieldRow label="Risk" value={formatLabel(feature.riskLevel)} />
+            <FieldRow label="Next action" value={feature.nextAction ?? "none"} />
+            <FieldRow
+              label="Required evidence"
+              value={feature.requiredEvidence.length > 0 ? feature.requiredEvidence.join(", ") : "none"}
+            />
+            {feature.rootIssueId ? (
+              <FieldRow
+                label="Root issue"
+                value={<Link to={`/issues/${feature.rootIssueId}`} className="text-primary hover:underline">{feature.rootIssueId.slice(0, 8)}</Link>}
+              />
+            ) : null}
+            {briefEntries.length > 0 ? (
+              <div className="space-y-2">
+                {briefEntries.map(([key, value]) => (
+                  <FieldRow key={key} label={formatLabel(key)} value={renderBriefValue(value)} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <SheetFooter className="border-t border-border">
+          <Button
+            type="button"
+            disabled={!feature || !canSelect || selectPending}
+            onClick={() => feature && onSelectForDelivery(feature)}
+          >
+            <PlayCircle className="h-4 w-4" />
+            {selectPending ? "Selecting..." : "Select for delivery"}
+          </Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -577,6 +683,7 @@ function AutoMergePanel({ candidates }: { candidates: AutoMergeCandidate[] }) {
 export function ControlTower() {
   const { selectedCompanyId, companies } = useCompany();
   const queryClient = useQueryClient();
+  const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const { setBreadcrumbs } = useBreadcrumbs();
 
   useEffect(() => {
@@ -659,6 +766,18 @@ export function ControlTower() {
       }
     },
   });
+  const selectFeatureMutation = useMutation({
+    mutationFn: (feature: Feature) =>
+      deliveryControlApi.updateFeature(feature.id, {
+        intakeStatus: "selected",
+        nextAction: "CTO selected this feature for delivery; wait for repo gate before branch start.",
+      }),
+    onSuccess: () => {
+      if (selectedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.deliveryControl.features(selectedCompanyId) });
+      }
+    },
+  });
 
   const isLoading =
     repoLocksQuery.isLoading ||
@@ -702,6 +821,7 @@ export function ControlTower() {
   const lockedRepos = repoLocks.filter((lock) => lock.state !== "free").length;
   const failedEvidence = verificationRuns.filter((run) => run.status === "fail" || run.status === "blocked").length;
   const eligibleAutoMergeCandidates = autoMergeCandidates.filter((candidate) => candidate.eligible).length;
+  const selectedFeature = selectedFeatureId ? features.find((feature) => feature.id === selectedFeatureId) ?? null : null;
 
   if (!selectedCompanyId) {
     return companies.length === 0
@@ -748,6 +868,7 @@ export function ControlTower() {
             moveFeatureMutation.mutate({ current, target, currentRank, targetRank })
           }
           movePending={moveFeatureMutation.isPending}
+          onOpenFeature={(feature) => setSelectedFeatureId(feature.id)}
         />
         <EvidencePanel runs={verificationRuns} />
         <HarnessPanel runs={harnessRuns} findings={harnessFindings} />
@@ -756,6 +877,15 @@ export function ControlTower() {
       <AutoMergePanel candidates={autoMergeCandidates} />
 
       <AgentThroughputPanel rows={agentThroughput} />
+      <FeatureDetailSheet
+        feature={selectedFeature}
+        open={selectedFeature !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedFeatureId(null);
+        }}
+        onSelectForDelivery={(feature) => selectFeatureMutation.mutate(feature)}
+        selectPending={selectFeatureMutation.isPending}
+      />
     </div>
   );
 }
