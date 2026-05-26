@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_ROLE_LABELS, acceptInviteSchema, createAgentSchema, updateAgentSchema } from "./index.js";
+import { AGENT_ADAPTER_TYPES, AGENT_ROLE_LABELS, acceptInviteSchema, createAgentSchema, updateAgentSchema } from "./index.js";
 
 describe("dynamic adapter type validation schemas", () => {
   it("accepts external adapter types in create/update agent schemas", () => {
@@ -60,5 +60,9 @@ describe("dynamic adapter type validation schemas", () => {
     ).toBe("security");
 
     expect(AGENT_ROLE_LABELS.security).toBe("Security");
+  });
+
+  it("includes DeepSeek Platform as a built-in selectable adapter", () => {
+    expect(AGENT_ADAPTER_TYPES).toContain("deepseek_platform");
   });
 });
