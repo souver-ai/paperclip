@@ -13,6 +13,8 @@ import {
   projectWorkspaces,
 } from "@paperclipai/db";
 import {
+  BLOCKER_TYPES,
+  DELIVERY_STATES,
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,
   cancelIssueThreadInteractionSchema,
@@ -120,6 +122,17 @@ const updateIssueWithDeliveryProofsRouteSchema = updateIssueRouteSchema.extend({
   deliveryProofs: z.array(createIssueDeliveryProofSchema).max(20).optional(),
 });
 const DONE_DELIVERY_STATES = new Set(["merged_verified", "live_verified", "waived_by_benjamin"]);
+const DELIVERY_STATE_VALUES = new Set<string>(DELIVERY_STATES);
+const BLOCKER_TYPE_VALUES = new Set<string>(BLOCKER_TYPES);
+const CONTROL_TOWER_UPDATE_KEYS = new Set([
+  "deliverystate",
+  "blockertype",
+  "terminalevidence",
+  "nextaction",
+  "benjaminrequired",
+  "automergeeligible",
+  "antirecurrencepatternid",
+]);
 
 type ParsedExecutionState = NonNullable<ReturnType<typeof parseIssueExecutionState>>;
 type NormalizedExecutionPolicy = NonNullable<ReturnType<typeof normalizeIssueExecutionPolicy>>;
@@ -622,6 +635,135 @@ function hasTerminalEvidence(value: unknown) {
 
 function isMissingDeliveryProof(input: { status: string; deliveryProofCount: number; terminalEvidence: unknown }) {
   return input.status === "done" && input.deliveryProofCount === 0 && !hasTerminalEvidence(input.terminalEvidence);
+}
+
+function parseBooleanLiteral(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (["true", "yes", "oui", "1"].includes(normalized)) return true;
+  if (["false", "no", "non", "0"].includes(normalized)) return false;
+  return undefined;
+}
+
+function stripOptionalQuotes(value: string) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith("`") && trimmed.endsWith("`"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function parseJsonObjectLiteral(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.toLowerCase() === "null") return null;
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function extractControlTowerUpdateRecord(body: string) {
+  const heading = /(?:^|\n)\s*(?:#{1,6}\s*)?Control Tower update\s*:?\s*/i.exec(body);
+  if (!heading) return null;
+
+  const rest = body.slice((heading.index ?? 0) + heading[0].length).trim();
+  if (!rest) return null;
+
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(rest);
+  if (fenced?.[1]) {
+    try {
+      const parsed = JSON.parse(fenced[1]);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  const record: Record<string, unknown> = {};
+  for (const line of rest.split(/\r?\n/)) {
+    const match = /^\s*(?:[-*]\s*)?([A-Za-z][A-Za-z0-9]*)\s*:\s*(.+?)\s*$/.exec(line);
+    if (!match) continue;
+    const [, rawKey, rawValue] = match;
+    const normalizedKey = rawKey.toLowerCase();
+    if (!CONTROL_TOWER_UPDATE_KEYS.has(normalizedKey)) continue;
+    record[rawKey] = stripOptionalQuotes(rawValue);
+  }
+
+  return Object.keys(record).length > 0 ? record : null;
+}
+
+function readControlTowerValue(record: Record<string, unknown>, key: string) {
+  const foundKey = Object.keys(record).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
+  return foundKey ? record[foundKey] : undefined;
+}
+
+function parseControlTowerIssuePatch(body: string) {
+  const record = extractControlTowerUpdateRecord(body);
+  if (!record) return null;
+
+  const patch: Record<string, unknown> = {};
+
+  const deliveryState = readControlTowerValue(record, "deliveryState");
+  if (typeof deliveryState === "string" && DELIVERY_STATE_VALUES.has(deliveryState.trim())) {
+    patch.deliveryState = deliveryState.trim();
+  }
+
+  const blockerType = readControlTowerValue(record, "blockerType");
+  if (typeof blockerType === "string") {
+    const normalized = blockerType.trim();
+    if (normalized.toLowerCase() === "null" || normalized.toLowerCase() === "none") {
+      patch.blockerType = null;
+    } else if (BLOCKER_TYPE_VALUES.has(normalized)) {
+      patch.blockerType = normalized;
+    }
+  }
+
+  const terminalEvidence = readControlTowerValue(record, "terminalEvidence");
+  if (terminalEvidence && typeof terminalEvidence === "object" && !Array.isArray(terminalEvidence)) {
+    patch.terminalEvidence = terminalEvidence;
+  } else if (typeof terminalEvidence === "string") {
+    const parsed = parseJsonObjectLiteral(terminalEvidence);
+    if (parsed !== undefined) patch.terminalEvidence = parsed;
+  }
+
+  const nextAction = readControlTowerValue(record, "nextAction");
+  if (typeof nextAction === "string") {
+    const value = stripOptionalQuotes(nextAction).trim();
+    if (value.length > 0 && value.length <= 2000) patch.nextAction = value;
+  }
+
+  const benjaminRequired = readControlTowerValue(record, "benjaminRequired");
+  if (typeof benjaminRequired === "boolean") {
+    patch.benjaminRequired = benjaminRequired;
+  } else if (typeof benjaminRequired === "string") {
+    const parsed = parseBooleanLiteral(benjaminRequired);
+    if (parsed !== undefined) patch.benjaminRequired = parsed;
+  }
+
+  const autoMergeEligible = readControlTowerValue(record, "autoMergeEligible");
+  if (typeof autoMergeEligible === "boolean") {
+    patch.autoMergeEligible = autoMergeEligible;
+  } else if (typeof autoMergeEligible === "string") {
+    const parsed = parseBooleanLiteral(autoMergeEligible);
+    if (parsed !== undefined) patch.autoMergeEligible = parsed;
+  }
+
+  const antiRecurrencePatternId = readControlTowerValue(record, "antiRecurrencePatternId");
+  if (typeof antiRecurrencePatternId === "string") {
+    const value = stripOptionalQuotes(antiRecurrencePatternId).trim();
+    if (value.length > 0 && value.length <= 160) patch.antiRecurrencePatternId = value;
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
 }
 
 function shouldImplicitlyMoveCommentedIssueToTodo(input: {
@@ -4707,6 +4849,33 @@ export function issueRoutes(
       metadata: req.body.metadata ?? null,
     });
     await issueReferencesSvc.syncComment(comment.id);
+    const controlTowerPatch =
+      actor.actorType === "agent" ? parseControlTowerIssuePatch(comment.body) : null;
+    if (controlTowerPatch) {
+      const updatedIssue = await svc.update(currentIssue.id, {
+        ...controlTowerPatch,
+        actorAgentId: actor.agentId,
+        actorUserId: null,
+      });
+      if (updatedIssue) {
+        currentIssue = updatedIssue;
+        await logActivity(db, {
+          companyId: currentIssue.companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.control_tower_update_applied",
+          entityType: "issue",
+          entityId: currentIssue.id,
+          details: {
+            commentId: comment.id,
+            identifier: currentIssue.identifier,
+            appliedFields: Object.keys(controlTowerPatch).sort(),
+          },
+        });
+      }
+    }
     const commentReferenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(currentIssue.id);
     const commentReferenceDiff = issueReferencesSvc.diffIssueReferenceSummary(
       commentReferenceSummaryBefore,
