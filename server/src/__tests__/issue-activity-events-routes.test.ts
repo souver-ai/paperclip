@@ -93,6 +93,9 @@ function registerModuleMocks() {
       getActiveForIssue: vi.fn(async () => null),
       listActiveForIssues: vi.fn(async () => new Map()),
     }),
+    issueThreadInteractionService: () => ({
+      expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
+    }),
     issueReferenceService: () => ({
       deleteDocumentSource: async () => undefined,
       diffIssueReferenceSummary: () => ({
@@ -114,7 +117,7 @@ function registerModuleMocks() {
   }));
 }
 
-async function createApp(db: unknown = {}) {
+async function createApp(db: unknown = {}, actorOverride?: Record<string, unknown>) {
   const [{ issueRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/issues.js")>("../routes/issues.js"),
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
@@ -128,6 +131,7 @@ async function createApp(db: unknown = {}) {
       companyIds: ["company-1"],
       source: "local_implicit",
       isInstanceAdmin: false,
+      ...actorOverride,
     };
     next();
   });
@@ -399,6 +403,75 @@ describe("issue activity event routes", () => {
         }),
       );
     });
+  });
+
+  it("applies native Control Tower fields from structured agent comments", async () => {
+    const issue = makeIssue();
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-1",
+      issueId: issue.id,
+      companyId: issue.companyId,
+      body: [
+        "Control Tower update:",
+        "- deliveryState: in_review",
+        "- blockerType: test_gate",
+        "- benjaminRequired: false",
+        "- autoMergeEligible: true",
+        "- nextAction: Wait for Test Architect target verification.",
+      ].join("\n"),
+    });
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...issue,
+      ...patch,
+      updatedAt: new Date(),
+    }));
+
+    const res = await request(await createApp({}, {
+      type: "agent",
+      agentId: issue.assigneeAgentId,
+      companyId: issue.companyId,
+      runId: "run-1",
+    }))
+      .post(`/api/issues/${issue.id}/comments`)
+      .send({
+        body: [
+          "Control Tower update:",
+          "- deliveryState: in_review",
+          "- blockerType: test_gate",
+          "- benjaminRequired: false",
+          "- autoMergeEligible: true",
+          "- nextAction: Wait for Test Architect target verification.",
+        ].join("\n"),
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalledWith(issue.id, expect.objectContaining({
+      deliveryState: "in_review",
+      blockerType: "test_gate",
+      benjaminRequired: false,
+      autoMergeEligible: true,
+      nextAction: "Wait for Test Architect target verification.",
+      actorAgentId: issue.assigneeAgentId,
+      actorUserId: null,
+    }));
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.control_tower_update_applied",
+        entityId: issue.id,
+        details: expect.objectContaining({
+          commentId: "comment-1",
+          appliedFields: [
+            "autoMergeEligible",
+            "benjaminRequired",
+            "blockerType",
+            "deliveryState",
+            "nextAction",
+          ],
+        }),
+      }),
+    );
   });
 
   it("rejects done transitions without terminal evidence", async () => {
