@@ -34,6 +34,7 @@ export { features } from "./features.js";
 export { featurePriorityEvents } from "./feature_priority_events.js";
 export { repoLocks } from "./repo_locks.js";
 export { verificationRuns } from "./verification_runs.js";
+export { testCases } from "./test_cases.js";
 export { harnessRuns } from "./harness_runs.js";
 export { harnessFindings } from "./harness_findings.js";
 export { issueRecoveryActions } from "./issue_recovery_actions.js";

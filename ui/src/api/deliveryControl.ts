@@ -8,10 +8,13 @@ import type {
   HarnessFinding,
   HarnessRun,
   RepoLock,
+  TestCase,
+  TestCaseBackfillSummary,
   UpdateHarnessFinding,
   UpdateFeature,
   UpdateRepoLock,
   UpsertRepoLock,
+  UpsertTestCase,
   VerificationRun,
 } from "@paperclipai/shared";
 import { api } from "./client";
@@ -34,6 +37,12 @@ export const deliveryControlApi = {
     api.get<VerificationRun[]>(`/companies/${companyId}/verification-runs`),
   createVerificationRun: (companyId: string, data: CreateVerificationRun) =>
     api.post<VerificationRun>(`/companies/${companyId}/verification-runs`, data),
+  listTestCases: (companyId: string) =>
+    api.get<TestCase[]>(`/companies/${companyId}/test-cases`),
+  backfillSouverTestCases: (companyId: string) =>
+    api.post<TestCaseBackfillSummary>(`/companies/${companyId}/test-cases/backfill-souver`, {}),
+  upsertTestCase: (companyId: string, data: UpsertTestCase) =>
+    api.post<TestCase>(`/companies/${companyId}/test-cases`, data),
   listHarnessRuns: (companyId: string) => api.get<HarnessRun[]>(`/companies/${companyId}/harness-runs`),
   createHarnessRun: (companyId: string, data: CreateHarnessRun) =>
     api.post<HarnessRun>(`/companies/${companyId}/harness-runs`, data),

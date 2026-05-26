@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
@@ -10,6 +11,7 @@ import {
   heartbeatRuns,
   issues,
   repoLocks,
+  testCases,
   verificationRuns,
 } from "@paperclipai/db";
 import type {
@@ -18,10 +20,13 @@ import type {
   CreateHarnessFinding,
   CreateHarnessRun,
   CreateVerificationRun,
+  TestCase,
+  TestCaseBackfillSummary,
   UpdateHarnessFinding,
   UpdateFeature,
   UpdateRepoLock,
   UpsertRepoLock,
+  UpsertTestCase,
 } from "@paperclipai/shared";
 
 const AUTO_MERGE_READY_STATES = new Set(["merge_ready"]);
@@ -54,6 +59,7 @@ type FeatureRow = typeof features.$inferSelect;
 type AgentRow = typeof agents.$inferSelect;
 type RepoLockRow = typeof repoLocks.$inferSelect;
 type VerificationRunRow = typeof verificationRuns.$inferSelect;
+type TestCaseRow = typeof testCases.$inferSelect;
 
 const FEATURE_BACKFILL_AGENT_NAMES = new Set(["Dev Feature", "PM Feature"]);
 const FEATURE_BACKFILL_PRODUCT_PREFIXES = ["[desktop]", "[dashboard]", "[cli]", "[feature]"];
@@ -89,6 +95,298 @@ function parseDate(value: string | null | undefined): Date | null | undefined {
 
 function cleanUndefined<T extends Record<string, unknown>>(input: T): Partial<T> {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as Partial<T>;
+}
+
+function cleanCell(value: string | undefined): string {
+  return (value ?? "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/`/g, "")
+    .replace(/\[\[([^\]|]+)\|?([^\]]*)\]\]/g, (_match, target: string, label: string) => label || target)
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function slugify(value: string): string {
+  return cleanCell(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 180) || "test";
+}
+
+function parseMarkdownTableRows(content: string): string[][] {
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|") && line.endsWith("|"))
+    .filter((line) => !/^\|\s*-+/.test(line))
+    .map((line) => line.slice(1, -1).split("|").map(cleanCell));
+}
+
+function repoFromSurface(value: string): string | null {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("dashboard")) return "dashboard";
+  if (normalized.includes("app") || normalized.includes("cli")) return "app_cli";
+  if (normalized.includes("desktop")) return "desktop";
+  if (normalized.includes("inference")) return "inference";
+  if (normalized.includes("research") || normalized.includes("harness")) return "souver_research";
+  if (normalized.includes("doc") || normalized.includes("ops") || normalized.includes("paperclip")) return "paperclip";
+  return null;
+}
+
+function typeFromText(value: string): UpsertTestCase["type"] {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("security") || normalized.includes("pentest") || normalized.includes("redteam")) return "security";
+  if (normalized.includes("visible")) return "visible_e2e";
+  if (normalized.includes("harness") || normalized.includes("terminal-bench") || normalized.includes("baseline") || normalized.includes("experiment")) return "harness";
+  if (normalized.includes("e2e") || normalized.includes("playwright") || normalized.includes("smoke")) return "e2e";
+  if (normalized.includes("integration") || normalized.includes("rls")) return "integration";
+  if (normalized.includes("manual")) return "manual_review";
+  return "unit";
+}
+
+function triggerFromText(value: string): UpsertTestCase["trigger"] {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("nightly")) return "nightly";
+  if (normalized.includes("weekly")) return "weekly";
+  if (normalized.includes("daily")) return "daily";
+  if (normalized.includes("release")) return "release";
+  if (normalized.includes("delivery")) return "per_delivery";
+  if (normalized.includes("pr") || normalized.includes("merge")) return "per_pr";
+  return "manual";
+}
+
+function caseStatusFromText(value: string): UpsertTestCase["status"] {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("flaky")) return "flaky";
+  if (normalized.includes("blocked") || normalized.includes("finding_open")) return "blocked";
+  if (normalized.includes("missing") || normalized.includes("not_started") || normalized.includes("todo")) return "missing";
+  if (normalized.includes("retired")) return "retired";
+  if (normalized.includes("active") || normalized.includes("passed") || normalized.includes("automated") || normalized.includes("documented")) return "active";
+  return "designed";
+}
+
+function lastStatusFromText(status: string, lastRun: string): UpsertTestCase["lastStatus"] {
+  const normalized = `${status} ${lastRun}`.toLowerCase();
+  if (normalized.includes("fail")) return "fail";
+  if (normalized.includes("pass") || normalized.includes("passed") || normalized.includes("vert")) return "pass";
+  if (normalized.includes("flaky")) return "flaky";
+  if (normalized.includes("skipped")) return "skipped";
+  if (normalized.includes("blocked") || normalized.includes("finding_open")) return "blocked";
+  if (normalized.includes("missing") || normalized.includes("not_started") || normalized.includes("not_run") || normalized.includes("todo")) return "missing";
+  if (normalized.includes("stale")) return "stale";
+  if (lastRun.trim().length > 0) return "inconclusive";
+  return null;
+}
+
+function firstIsoDate(value: string): string | null {
+  return value.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0] ?? null;
+}
+
+function splitRefs(value: string): string[] {
+  return [...new Set((value.match(/\b[A-Z]{2,10}-\d+\b/g) ?? []).map((ref) => ref.toUpperCase()))];
+}
+
+function buildRegressionLedgerCases(content: string, sourcePath: string): UpsertTestCase[] {
+  const rows = parseMarkdownTableRows(content);
+  const headerIndex = rows.findIndex((row) => row[0] === "ID" && row.includes("Commande"));
+  if (headerIndex < 0) return [];
+  return rows.slice(headerIndex + 1).filter((row) => row.length >= 9).map((row) => {
+    const [stableKey, surface, risk, command, trigger, owner, source, status, lastRun] = row;
+    const lastDate = firstIsoDate(lastRun);
+    const lastStatus = lastStatusFromText(status, lastRun);
+    return {
+      stableKey: slugify(stableKey),
+      title: cleanCell(stableKey),
+      repo: repoFromSurface(surface),
+      productArea: repoFromSurface(surface) ?? "souver",
+      featureIds: splitRefs(source),
+      issueIds: splitRefs(`${source} ${lastRun}`),
+      type: typeFromText(`${stableKey} ${command} ${risk}`),
+      trigger: triggerFromText(trigger),
+      command: command || null,
+      owner: owner || null,
+      environment: command.toLowerCase().includes("visible") ? "visible local" : "local",
+      riskCovered: risk || null,
+      requiredForDelivery: trigger.toLowerCase().includes("delivery") || trigger.toLowerCase().includes("pr"),
+      visibleRunnable: `${stableKey} ${command}`.toLowerCase().includes("visible"),
+      status: caseStatusFromText(status),
+      source: "regression_ledger",
+      sourcePath,
+      lastStatus,
+      lastRunAt: lastDate,
+      artifactRefs: splitRefs(`${source} ${lastRun}`),
+      nextAction: lastStatus === "pass" ? null : lastRun || "Run required before this test can be terminal evidence.",
+    };
+  });
+}
+
+function buildCahierCases(content: string, sourcePath: string, repo: string): UpsertTestCase[] {
+  const rows = parseMarkdownTableRows(content);
+  const commandHeaderIndex = rows.findIndex((row) => row[0] === "Niveau" && row.includes("Commande"));
+  const cases: UpsertTestCase[] = [];
+  if (commandHeaderIndex >= 0) {
+    for (const row of rows.slice(commandHeaderIndex + 1)) {
+      if (row.length < 4 || row[0] === "Suite" || row[0] === "Fonctionnalite livree" || row[0] === "Gap") break;
+      const [level, command, trigger, evidence] = row;
+      cases.push({
+        stableKey: `${repo}-validation-${slugify(level)}`,
+        title: `${repo} ${level}`,
+        repo,
+        productArea: repo,
+        type: typeFromText(`${level} ${command}`),
+        trigger: triggerFromText(trigger),
+        command: command || null,
+        owner: "Test Architect",
+        environment: command.toLowerCase().includes("visible") ? "visible local" : "local",
+        riskCovered: evidence ? `Produces ${evidence}` : null,
+        requiredForDelivery: triggerFromText(trigger) === "per_pr" || triggerFromText(trigger) === "per_delivery",
+        visibleRunnable: command.toLowerCase().includes("visible"),
+        status: "designed",
+        source: "cahier",
+        sourcePath,
+        lastStatus: "missing",
+        nextAction: "Cahier command is designed; attach a real run before using as terminal evidence.",
+      });
+    }
+  }
+  const gapHeaderIndex = rows.findIndex((row) => row[0] === "Gap" && row.includes("Suite attendue"));
+  if (gapHeaderIndex >= 0) {
+    for (const row of rows.slice(gapHeaderIndex + 1)) {
+      if (row.length < 3 || row[0] === "Source") break;
+      const [gap, impact, expected] = row;
+      cases.push({
+        stableKey: `${repo}-gap-${slugify(gap)}`,
+        title: gap,
+        repo,
+        productArea: repo,
+        type: typeFromText(expected),
+        trigger: "manual",
+        command: expected || null,
+        owner: "Test Architect",
+        riskCovered: impact || null,
+        requiredForDelivery: false,
+        visibleRunnable: expected.toLowerCase().includes("visible"),
+        status: "missing",
+        source: "cahier",
+        sourcePath,
+        lastStatus: "missing",
+        nextAction: expected || "Define and run the missing suite.",
+      });
+    }
+  }
+  return cases;
+}
+
+function buildSecurityCatalogCases(content: string, sourcePath: string): UpsertTestCase[] {
+  const rows = parseMarkdownTableRows(content);
+  const headerIndex = rows.findIndex((row) => row[0] === "ID" && row.includes("Commande / méthode"));
+  if (headerIndex < 0) return [];
+  return rows.slice(headerIndex + 1).filter((row) => row.length >= 13).map((row) => {
+    const [id, title, domain, surface, feature, mode, criticality, status, lastRun, verdict, owner, evidence, command] = row;
+    const lastDate = firstIsoDate(lastRun);
+    return {
+      stableKey: slugify(id),
+      title: `${id} ${title}`,
+      repo: repoFromSurface(surface),
+      productArea: surface || "security",
+      featureIds: feature ? [feature] : [],
+      issueIds: splitRefs(`${feature} ${evidence}`),
+      type: "security",
+      trigger: mode.toLowerCase().includes("unit") ? "per_pr" : "manual",
+      command: command || null,
+      owner: owner || null,
+      environment: mode || null,
+      riskCovered: `${domain}${criticality ? ` (${criticality})` : ""}`,
+      requiredForDelivery: criticality.toLowerCase() === "critical",
+      visibleRunnable: false,
+      status: caseStatusFromText(status),
+      source: "security_catalog",
+      sourcePath,
+      lastStatus: lastStatusFromText(verdict, lastRun),
+      lastRunAt: lastDate,
+      artifactRefs: evidence ? [evidence] : [],
+      nextAction: verdict === "pass" ? null : command || owner || "Security run required.",
+    };
+  });
+}
+
+function buildSecurityMatrixCases(content: string, sourcePath: string): UpsertTestCase[] {
+  const rows = parseMarkdownTableRows(content);
+  const headerIndex = rows.findIndex((row) => row[0] === "ID" && row.includes("Risque"));
+  if (headerIndex < 0) return [];
+  return rows.slice(headerIndex + 1).filter((row) => row.length >= 9).map((row) => {
+    const [id, surface, domain, risk, criticality, status, owner, lastRun, evidence, notes] = row;
+    const lastDate = firstIsoDate(lastRun);
+    return {
+      stableKey: slugify(id),
+      title: `${id} ${surface} ${domain}`,
+      repo: repoFromSurface(surface),
+      productArea: surface || "security",
+      type: "security",
+      trigger: "manual",
+      command: notes || null,
+      owner: owner || null,
+      environment: "security coverage matrix",
+      riskCovered: risk || null,
+      requiredForDelivery: criticality.toLowerCase() === "critical",
+      visibleRunnable: false,
+      status: caseStatusFromText(status),
+      source: "security_matrix",
+      sourcePath,
+      lastStatus: lastStatusFromText(status, lastRun),
+      lastRunAt: lastDate,
+      artifactRefs: evidence ? [evidence] : [],
+      nextAction: status.toLowerCase().includes("automated") ? null : notes || owner || "Security coverage requires execution.",
+    };
+  });
+}
+
+async function readOptionalFile(path: string) {
+  try {
+    return { path, content: await readFile(path, "utf8") };
+  } catch {
+    return { path, content: null };
+  }
+}
+
+async function buildSouverTestCaseBackfillCandidates(): Promise<{
+  cases: UpsertTestCase[];
+  sourcesRead: string[];
+  sourcesMissing: string[];
+}> {
+  const root = "/Users/openclaw/Developer/souver";
+  const sourceSpecs = [
+    { path: `${root}/doc/04-agents/testing/regression-ledger.md`, kind: "regression" as const },
+    { path: `${root}/doc/04-agents/testing/cahiers/README.md`, kind: "cahier" as const, repo: "parent_kb_ops" },
+    { path: `${root}/doc/04-agents/testing/cahiers/dashboard.md`, kind: "cahier" as const, repo: "dashboard" },
+    { path: `${root}/doc/04-agents/testing/cahiers/app-cli.md`, kind: "cahier" as const, repo: "app_cli" },
+    { path: `${root}/doc/04-agents/testing/cahiers/desktop.md`, kind: "cahier" as const, repo: "desktop" },
+    { path: `${root}/doc/04-agents/testing/cahiers/inference.md`, kind: "cahier" as const, repo: "inference" },
+    { path: `${root}/doc/04-agents/testing/cahiers/harness.md`, kind: "cahier" as const, repo: "souver_research" },
+    { path: `${root}/doc/04-agents/testing/security-test-catalog.md`, kind: "securityCatalog" as const },
+    { path: `${root}/doc/04-agents/testing/security-coverage-matrix.md`, kind: "securityMatrix" as const },
+  ];
+  const reads = await Promise.all(sourceSpecs.map((source) => readOptionalFile(source.path)));
+  const sourcesRead: string[] = [];
+  const sourcesMissing: string[] = [];
+  const cases: UpsertTestCase[] = [];
+  for (let index = 0; index < sourceSpecs.length; index += 1) {
+    const source = sourceSpecs[index]!;
+    const read = reads[index]!;
+    if (!read.content) {
+      sourcesMissing.push(source.path);
+      continue;
+    }
+    sourcesRead.push(source.path);
+    if (source.kind === "regression") cases.push(...buildRegressionLedgerCases(read.content, source.path));
+    if (source.kind === "cahier") cases.push(...buildCahierCases(read.content, source.path, source.repo));
+    if (source.kind === "securityCatalog") cases.push(...buildSecurityCatalogCases(read.content, source.path));
+    if (source.kind === "securityMatrix") cases.push(...buildSecurityMatrixCases(read.content, source.path));
+  }
+  return { cases, sourcesRead, sourcesMissing };
 }
 
 function isOpenIssueStatus(status: string) {
@@ -628,6 +926,129 @@ export function deliveryControlService(db: Db) {
       .orderBy(desc(verificationRuns.finishedAt), desc(verificationRuns.createdAt));
   }
 
+  async function listTestCases(companyId: string): Promise<TestCase[]> {
+    const rows = await db
+      .select()
+      .from(testCases)
+      .where(eq(testCases.companyId, companyId))
+      .orderBy(testCases.repo, testCases.type, testCases.stableKey);
+    return rows as unknown as TestCase[];
+  }
+
+  async function upsertTestCases(companyId: string, inputs: UpsertTestCase[]) {
+    if (inputs.length === 0) return { created: 0, updated: 0, tests: [] as TestCaseRow[] };
+    const existingRows = await db
+      .select({ stableKey: testCases.stableKey })
+      .from(testCases)
+      .where(eq(testCases.companyId, companyId));
+    const existingKeys = new Set(existingRows.map((row) => row.stableKey));
+    const now = new Date();
+    const rows = await db
+      .insert(testCases)
+      .values(inputs.map((input) => ({
+        companyId,
+        stableKey: input.stableKey,
+        title: input.title,
+        repo: input.repo,
+        productArea: input.productArea,
+        featureIds: input.featureIds ?? [],
+        issueIds: input.issueIds ?? [],
+        type: input.type,
+        trigger: input.trigger,
+        command: input.command,
+        owner: input.owner,
+        environment: input.environment,
+        riskCovered: input.riskCovered,
+        requiredForDelivery: input.requiredForDelivery ?? false,
+        visibleRunnable: input.visibleRunnable ?? false,
+        expectedDurationSec: input.expectedDurationSec,
+        status: input.status,
+        source: input.source,
+        sourcePath: input.sourcePath,
+        lastRunId: input.lastRunId,
+        lastStatus: input.lastStatus,
+        lastRunAt: parseDate(input.lastRunAt) ?? null,
+        lastCommitSha: input.lastCommitSha,
+        lastBranch: input.lastBranch,
+        lastPrUrl: input.lastPrUrl,
+        artifactRefs: input.artifactRefs ?? [],
+        gapIssueId: input.gapIssueId,
+        flakyReason: input.flakyReason,
+        waiver: input.waiver,
+        nextAction: input.nextAction,
+        updatedAt: now,
+      })))
+      .onConflictDoUpdate({
+        target: [testCases.companyId, testCases.stableKey],
+        set: {
+          title: sql`excluded.title`,
+          repo: sql`excluded.repo`,
+          productArea: sql`excluded.product_area`,
+          featureIds: sql`excluded.feature_ids`,
+          issueIds: sql`excluded.issue_ids`,
+          type: sql`excluded.type`,
+          trigger: sql`excluded.trigger`,
+          command: sql`excluded.command`,
+          owner: sql`excluded.owner`,
+          environment: sql`excluded.environment`,
+          riskCovered: sql`excluded.risk_covered`,
+          requiredForDelivery: sql`excluded.required_for_delivery`,
+          visibleRunnable: sql`excluded.visible_runnable`,
+          expectedDurationSec: sql`excluded.expected_duration_sec`,
+          status: sql`excluded.status`,
+          source: sql`excluded.source`,
+          sourcePath: sql`excluded.source_path`,
+          lastRunId: sql`excluded.last_run_id`,
+          lastStatus: sql`excluded.last_status`,
+          lastRunAt: sql`excluded.last_run_at`,
+          lastCommitSha: sql`excluded.last_commit_sha`,
+          lastBranch: sql`excluded.last_branch`,
+          lastPrUrl: sql`excluded.last_pr_url`,
+          artifactRefs: sql`excluded.artifact_refs`,
+          gapIssueId: sql`excluded.gap_issue_id`,
+          flakyReason: sql`excluded.flaky_reason`,
+          waiver: sql`excluded.waiver`,
+          nextAction: sql`excluded.next_action`,
+          updatedAt: now,
+        },
+      })
+      .returning();
+    const created = inputs.filter((input) => !existingKeys.has(input.stableKey)).length;
+    return { created, updated: inputs.length - created, tests: rows };
+  }
+
+  async function backfillSouverTestCases(companyId: string): Promise<TestCaseBackfillSummary> {
+    const { cases, sourcesRead, sourcesMissing } = await buildSouverTestCaseBackfillCandidates();
+    const uniqueCases = [...new Map(cases.map((testCase) => [testCase.stableKey, testCase])).values()];
+    const result = await upsertTestCases(companyId, uniqueCases);
+    const tests = await listTestCases(companyId);
+    const byRepo: Record<string, number> = {};
+    const byType: Record<string, number> = {};
+    const byLastStatus: Record<string, number> = {};
+    for (const testCase of tests) {
+      byRepo[testCase.repo ?? "none"] = (byRepo[testCase.repo ?? "none"] ?? 0) + 1;
+      byType[testCase.type] = (byType[testCase.type] ?? 0) + 1;
+      byLastStatus[testCase.lastStatus ?? "none"] = (byLastStatus[testCase.lastStatus ?? "none"] ?? 0) + 1;
+    }
+    const gaps = tests
+      .filter((testCase) => ["missing", "stale", "flaky", "blocked", "skipped", "inconclusive"].includes(testCase.lastStatus ?? testCase.status))
+      .slice(0, 20)
+      .map((testCase) => `${testCase.stableKey}: ${testCase.nextAction ?? testCase.lastStatus ?? testCase.status}`);
+    return {
+      imported: tests.length,
+      created: result.created,
+      updated: result.updated,
+      skipped: Math.max(0, cases.length - uniqueCases.length),
+      byRepo,
+      byType,
+      byLastStatus,
+      sourcesRead,
+      sourcesMissing,
+      gaps,
+      tests,
+    };
+  }
+
   function createVerificationRun(companyId: string, input: CreateVerificationRun) {
     return db
       .insert(verificationRuns)
@@ -751,6 +1172,9 @@ export function deliveryControlService(db: Db) {
     upsertRepoLock,
     updateRepoLock,
     listVerificationRuns,
+    listTestCases,
+    upsertTestCases,
+    backfillSouverTestCases,
     createVerificationRun,
     listHarnessRuns,
     createHarnessRun,

@@ -12,6 +12,11 @@ import type {
   VerificationFailureCategory,
   VerificationRunStatus,
   VerificationRunType,
+  TestCaseLastStatus,
+  TestCaseSource,
+  TestCaseStatus,
+  TestCaseTrigger,
+  TestCaseType,
 } from "../constants.js";
 
 export interface RepoLock {
@@ -52,6 +57,56 @@ export interface VerificationRun {
   ownerAgentId: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface TestCase {
+  id: string;
+  companyId: string;
+  stableKey: string;
+  title: string;
+  repo: IssueSurface | string | null;
+  productArea: string | null;
+  featureIds: string[];
+  issueIds: string[];
+  type: TestCaseType;
+  trigger: TestCaseTrigger;
+  command: string | null;
+  owner: string | null;
+  environment: string | null;
+  riskCovered: string | null;
+  requiredForDelivery: boolean;
+  visibleRunnable: boolean;
+  expectedDurationSec: number | null;
+  status: TestCaseStatus;
+  source: TestCaseSource;
+  sourcePath: string | null;
+  lastRunId: string | null;
+  lastStatus: TestCaseLastStatus | null;
+  lastRunAt: Date | null;
+  lastCommitSha: string | null;
+  lastBranch: string | null;
+  lastPrUrl: string | null;
+  artifactRefs: string[];
+  gapIssueId: string | null;
+  flakyReason: string | null;
+  waiver: Record<string, unknown> | null;
+  nextAction: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface TestCaseBackfillSummary {
+  imported: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  byRepo: Record<string, number>;
+  byType: Record<string, number>;
+  byLastStatus: Record<string, number>;
+  sourcesRead: string[];
+  sourcesMissing: string[];
+  gaps: string[];
+  tests: TestCase[];
 }
 
 export interface HarnessRun {

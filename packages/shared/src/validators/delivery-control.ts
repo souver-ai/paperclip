@@ -10,6 +10,11 @@ import {
   HARNESS_RUN_STATUSES,
   ISSUE_SURFACES,
   REPO_LOCK_STATES,
+  TEST_CASE_LAST_STATUSES,
+  TEST_CASE_SOURCES,
+  TEST_CASE_STATUSES,
+  TEST_CASE_TRIGGERS,
+  TEST_CASE_TYPES,
   VERIFICATION_FAILURE_CATEGORIES,
   VERIFICATION_RUN_STATUSES,
   VERIFICATION_RUN_TYPES,
@@ -88,6 +93,42 @@ export const createVerificationRunSchema = z.object({
 }).strict();
 
 export type CreateVerificationRun = z.infer<typeof createVerificationRunSchema>;
+
+const stringArraySchema = z.array(z.string().trim().min(1).max(240)).max(100).optional();
+
+export const upsertTestCaseSchema = z.object({
+  stableKey: z.string().trim().min(1).max(240),
+  title: z.string().trim().min(1).max(500),
+  repo: surfaceOrRepoSchema.optional().nullable(),
+  productArea: z.string().trim().min(1).max(160).optional().nullable(),
+  featureIds: stringArraySchema,
+  issueIds: stringArraySchema,
+  type: z.enum(TEST_CASE_TYPES),
+  trigger: z.enum(TEST_CASE_TRIGGERS),
+  command: z.string().trim().min(1).max(4000).optional().nullable(),
+  owner: z.string().trim().min(1).max(240).optional().nullable(),
+  environment: z.string().trim().min(1).max(240).optional().nullable(),
+  riskCovered: z.string().trim().max(4000).optional().nullable(),
+  requiredForDelivery: z.boolean().optional().default(false),
+  visibleRunnable: z.boolean().optional().default(false),
+  expectedDurationSec: z.number().int().nonnegative().optional().nullable(),
+  status: z.enum(TEST_CASE_STATUSES).optional().default("designed"),
+  source: z.enum(TEST_CASE_SOURCES),
+  sourcePath: z.string().trim().min(1).max(1000).optional().nullable(),
+  lastRunId: z.string().uuid().optional().nullable(),
+  lastStatus: z.enum(TEST_CASE_LAST_STATUSES).optional().nullable(),
+  lastRunAt: optionalDatetimeSchema,
+  lastCommitSha: z.string().trim().min(7).max(80).optional().nullable(),
+  lastBranch: z.string().trim().min(1).max(240).optional().nullable(),
+  lastPrUrl: z.string().trim().url().max(1000).optional().nullable(),
+  artifactRefs: artifactPathsSchema,
+  gapIssueId: z.string().uuid().optional().nullable(),
+  flakyReason: z.string().trim().max(2000).optional().nullable(),
+  waiver: z.record(z.string(), z.unknown()).optional().nullable(),
+  nextAction: z.string().trim().max(4000).optional().nullable(),
+}).strict();
+
+export type UpsertTestCase = z.infer<typeof upsertTestCaseSchema>;
 
 export const createHarnessRunSchema = z.object({
   issueId: z.string().uuid().optional().nullable(),

@@ -76,6 +76,7 @@ export const queryKeys = {
     features: (companyId: string) => ["delivery-control", companyId, "features"] as const,
     autoMergeCandidates: (companyId: string) => ["delivery-control", companyId, "auto-merge-candidates"] as const,
     verificationRuns: (companyId: string) => ["delivery-control", companyId, "verification-runs"] as const,
+    testCases: (companyId: string) => ["delivery-control", companyId, "test-cases"] as const,
     harnessRuns: (companyId: string) => ["delivery-control", companyId, "harness-runs"] as const,
     harnessFindings: (companyId: string) => ["delivery-control", companyId, "harness-findings"] as const,
   },

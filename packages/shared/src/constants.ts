@@ -256,6 +256,7 @@ export const VERIFICATION_RUN_TYPES = [
   "e2e",
   "visible_e2e",
   "security",
+  "harness",
   "manual_review",
   "build",
   "live_smoke",
@@ -264,6 +265,63 @@ export type VerificationRunType = (typeof VERIFICATION_RUN_TYPES)[number];
 
 export const VERIFICATION_RUN_STATUSES = ["pass", "fail", "blocked", "inconclusive"] as const;
 export type VerificationRunStatus = (typeof VERIFICATION_RUN_STATUSES)[number];
+
+export const TEST_CASE_TYPES = [
+  "unit",
+  "integration",
+  "e2e",
+  "visible_e2e",
+  "security",
+  "harness",
+  "manual_review",
+] as const;
+export type TestCaseType = (typeof TEST_CASE_TYPES)[number];
+
+export const TEST_CASE_TRIGGERS = [
+  "per_pr",
+  "per_delivery",
+  "nightly",
+  "weekly",
+  "manual",
+  "release",
+  "daily",
+] as const;
+export type TestCaseTrigger = (typeof TEST_CASE_TRIGGERS)[number];
+
+export const TEST_CASE_STATUSES = [
+  "active",
+  "missing",
+  "flaky",
+  "blocked",
+  "retired",
+  "designed",
+] as const;
+export type TestCaseStatus = (typeof TEST_CASE_STATUSES)[number];
+
+export const TEST_CASE_LAST_STATUSES = [
+  "pass",
+  "fail",
+  "missing",
+  "stale",
+  "flaky",
+  "blocked",
+  "skipped",
+  "inconclusive",
+  "waived",
+] as const;
+export type TestCaseLastStatus = (typeof TEST_CASE_LAST_STATUSES)[number];
+
+export const TEST_CASE_SOURCES = [
+  "cahier",
+  "regression_ledger",
+  "cockpit",
+  "paperclip",
+  "github",
+  "manual",
+  "security_catalog",
+  "security_matrix",
+] as const;
+export type TestCaseSource = (typeof TEST_CASE_SOURCES)[number];
 
 export const VERIFICATION_FAILURE_CATEGORIES = [
   "product_regression",
