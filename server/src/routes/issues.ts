@@ -119,6 +119,7 @@ const updateIssueRouteSchema = updateIssueSchema.extend({
 const updateIssueWithDeliveryProofsRouteSchema = updateIssueRouteSchema.extend({
   deliveryProofs: z.array(createIssueDeliveryProofSchema).max(20).optional(),
 });
+const DONE_DELIVERY_STATES = new Set(["merged_verified", "live_verified", "waived_by_benjamin"]);
 
 type ParsedExecutionState = NonNullable<ReturnType<typeof parseIssueExecutionState>>;
 type NormalizedExecutionPolicy = NonNullable<ReturnType<typeof normalizeIssueExecutionPolicy>>;
@@ -608,6 +609,19 @@ function summarizeExecutionParticipants(
 
 function isClosedIssueStatus(status: string | null | undefined): status is "done" | "cancelled" {
   return status === "done" || status === "cancelled";
+}
+
+function hasTerminalEvidence(value: unknown) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value as Record<string, unknown>).length > 0,
+  );
+}
+
+function isMissingDeliveryProof(input: { status: string; deliveryProofCount: number; terminalEvidence: unknown }) {
+  return input.status === "done" && input.deliveryProofCount === 0 && !hasTerminalEvidence(input.terminalEvidence);
 }
 
 function shouldImplicitlyMoveCommentedIssueToTodo(input: {
@@ -1537,7 +1551,11 @@ export function issueRoutes(
     res.json(result.map((issue) => ({
       ...issue,
       deliveryProofCount: deliveryProofCounts.get(issue.id) ?? 0,
-      missingDeliveryProof: issue.status === "done" && (deliveryProofCounts.get(issue.id) ?? 0) === 0,
+      missingDeliveryProof: isMissingDeliveryProof({
+        status: issue.status,
+        deliveryProofCount: deliveryProofCounts.get(issue.id) ?? 0,
+        terminalEvidence: issue.terminalEvidence,
+      }),
       successfulRunHandoff: handoffStates.get(issue.id) ?? null,
       activeRecoveryAction: recoveryActionByIssue.get(issue.id) ?? null,
     })));
@@ -1842,7 +1860,11 @@ export function issueRoutes(
       workProducts,
       deliveryProofs,
       deliveryProofCount: deliveryProofs.length,
-      missingDeliveryProof: issue.status === "done" && deliveryProofs.length === 0,
+      missingDeliveryProof: isMissingDeliveryProof({
+        status: issue.status,
+        deliveryProofCount: deliveryProofs.length,
+        terminalEvidence: issue.terminalEvidence,
+      }),
     });
   });
 
@@ -3105,11 +3127,23 @@ export function issueRoutes(
     Object.assign(updateFields, transition.patch);
     const nextStatus = typeof updateFields.status === "string" ? updateFields.status : existing.status;
     const isDoneTransitionRequested = existing.status !== "done" && nextStatus === "done";
-    if (isDoneTransitionRequested && requestedDeliveryProofs.length === 0) {
-      if (existingDeliveryProofCount === 0) {
+    if (isDoneTransitionRequested) {
+      const nextDeliveryState =
+        typeof updateFields.deliveryState === "string" ? updateFields.deliveryState : existing.deliveryState;
+      const nextTerminalEvidence =
+        updateFields.terminalEvidence !== undefined ? updateFields.terminalEvidence : existing.terminalEvidence;
+      if (!DONE_DELIVERY_STATES.has(nextDeliveryState)) {
         res.status(422).json({
-          error: "Delivery proof required before moving an issue to done",
-          code: "delivery_proof_required",
+          error: "Terminal delivery state required before moving an issue to done",
+          code: "terminal_delivery_state_required",
+          requiredDeliveryStates: [...DONE_DELIVERY_STATES],
+        });
+        return;
+      }
+      if (!hasTerminalEvidence(nextTerminalEvidence)) {
+        res.status(422).json({
+          error: "Terminal evidence required before moving an issue to done",
+          code: "terminal_evidence_required",
         });
         return;
       }
@@ -3837,7 +3871,11 @@ export function issueRoutes(
       ...issueResponse,
       ...(createdDeliveryProofs.length > 0 ? { deliveryProofs: createdDeliveryProofs } : {}),
       deliveryProofCount: responseDeliveryProofCount,
-      missingDeliveryProof: issue.status === "done" && responseDeliveryProofCount === 0,
+      missingDeliveryProof: isMissingDeliveryProof({
+        status: issue.status,
+        deliveryProofCount: responseDeliveryProofCount,
+        terminalEvidence: issue.terminalEvidence,
+      }),
       comment,
     });
   });

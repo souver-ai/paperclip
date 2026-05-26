@@ -175,6 +175,8 @@ describe("issue dependency wakeups in issue routes", () => {
       .patch("/api/issues/issue-1")
       .send({
         status: "done",
+        deliveryState: "merged_verified",
+        terminalEvidence: { kind: "target_branch_verified", command: "pnpm test issue-dependency-wakeups-routes" },
         deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-dependency-wakeups-routes" }],
       });
     expect(res.status).toBe(200);
@@ -262,6 +264,8 @@ describe("issue dependency wakeups in issue routes", () => {
       .patch("/api/issues/child-1")
       .send({
         status: "done",
+        deliveryState: "merged_verified",
+        terminalEvidence: { kind: "target_branch_verified", command: "pnpm test issue-dependency-wakeups-routes" },
         deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-dependency-wakeups-routes" }],
       });
     expect(res.status).toBe(200);

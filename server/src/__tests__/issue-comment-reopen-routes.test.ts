@@ -1129,6 +1129,8 @@ describe.sequential("issue comment reopen routes", () => {
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         status: "done",
+        deliveryState: "merged_verified",
+        terminalEvidence: { kind: "target_branch_verified", command: "pnpm test issue-comment-reopen-routes" },
         deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-comment-reopen-routes" }],
       });
 
@@ -1180,6 +1182,8 @@ describe.sequential("issue comment reopen routes", () => {
       .send({
         status: "done",
         comment: "Approved for ship",
+        deliveryState: "waived_by_benjamin",
+        terminalEvidence: { kind: "benjamin_waiver", comment: "Approved for ship" },
         deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-comment-reopen-routes" }],
       });
 

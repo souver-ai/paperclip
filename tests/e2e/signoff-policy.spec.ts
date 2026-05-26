@@ -33,6 +33,20 @@ function terminalProof(name: string) {
   };
 }
 
+function terminalDonePatch(comment: string, proofName: string) {
+  return {
+    status: "done",
+    comment,
+    deliveryState: "merged_verified",
+    terminalEvidence: {
+      kind: "signoff_policy_completed",
+      command: "playwright signoff-policy.spec.ts",
+      proofName,
+    },
+    deliveryProofs: [terminalProof(proofName)],
+  };
+}
+
 interface AgentAuth {
   agentId: string;
   token: string;
@@ -327,7 +341,7 @@ test.describe("Signoff execution policy", () => {
     // Step 5: Approver approves → should complete
     const step5Res = await agentPatch(
       ctx.boardRequest, ctx.approver, issueId,
-      { status: "done", comment: "Approved. Ship it.", deliveryProofs: [terminalProof("Approver signoff")] },
+      terminalDonePatch("Approved. Ship it.", "Approver signoff"),
     );
     expect(step5Res.ok()).toBe(true);
     const step5Issue = await step5Res.json();
@@ -440,7 +454,7 @@ test.describe("Signoff execution policy", () => {
     // Reviewer approves → should complete immediately (no approval stage)
     const approveRes = await agentPatch(
       ctx.boardRequest, ctx.reviewer, issue.id,
-      { status: "done", comment: "LGTM.", deliveryProofs: [terminalProof("Review-only signoff")] },
+      terminalDonePatch("LGTM.", "Review-only signoff"),
     );
     expect(approveRes.ok()).toBe(true);
     const doneIssue = await approveRes.json();

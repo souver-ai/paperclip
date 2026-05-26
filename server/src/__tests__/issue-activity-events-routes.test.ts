@@ -375,6 +375,11 @@ describe("issue activity event routes", () => {
       .patch(`/api/issues/${issue.id}`)
       .send({
         status: "done",
+        deliveryState: "merged_verified",
+        terminalEvidence: {
+          kind: "target_branch_verified",
+          command: "pnpm test issue-activity-events-routes",
+        },
         deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-activity-events-routes" }],
       });
 
@@ -394,6 +399,47 @@ describe("issue activity event routes", () => {
         }),
       );
     });
+  });
+
+  it("rejects done transitions without terminal evidence", async () => {
+    const issue = { ...makeIssue(), status: "in_progress" };
+    mockIssueService.getById.mockResolvedValue(issue);
+
+    const res = await request(await createApp())
+      .patch(`/api/issues/${issue.id}`)
+      .send({
+        status: "done",
+        deliveryState: "merged_verified",
+        deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-activity-events-routes" }],
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({
+      code: "terminal_evidence_required",
+    });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects done transitions without a terminal delivery state", async () => {
+    const issue = { ...makeIssue(), status: "in_progress" };
+    mockIssueService.getById.mockResolvedValue(issue);
+
+    const res = await request(await createApp())
+      .patch(`/api/issues/${issue.id}`)
+      .send({
+        status: "done",
+        deliveryState: "merge_ready",
+        terminalEvidence: {
+          kind: "target_branch_verified",
+          command: "pnpm test issue-activity-events-routes",
+        },
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({
+      code: "terminal_delivery_state_required",
+    });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
   it("does not log successful_run_handoff_resolved when status stays in_progress", async () => {
