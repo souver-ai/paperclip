@@ -9,6 +9,7 @@ import type {
   HarnessRun,
   RepoLock,
   UpdateHarnessFinding,
+  UpdateFeature,
   UpdateRepoLock,
   UpsertRepoLock,
   VerificationRun,
@@ -21,6 +22,9 @@ export const deliveryControlApi = {
     api.get<AgentThroughput[]>(`/companies/${companyId}/agent-throughput`),
   listFeatures: (companyId: string) =>
     api.get<Feature[]>(`/companies/${companyId}/features`),
+  backfillFeaturesFromIssues: (companyId: string) =>
+    api.post<{ created: number; skipped: number; features: Feature[] }>(`/companies/${companyId}/features/backfill-from-issues`, {}),
+  updateFeature: (id: string, data: UpdateFeature) => api.patch<Feature>(`/features/${id}`, data),
   listAutoMergeCandidates: (companyId: string) =>
     api.get<AutoMergeCandidate[]>(`/companies/${companyId}/auto-merge-candidates`),
   upsertRepoLock: (companyId: string, data: UpsertRepoLock) =>

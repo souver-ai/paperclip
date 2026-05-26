@@ -59,6 +59,25 @@ export function deliveryControlRoutes(db: Db) {
     res.status(201).json(feature);
   });
 
+  router.post("/companies/:companyId/features/backfill-from-issues", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const actor = getActorInfo(req);
+    const result = await svc.backfillFeaturesFromIssues(companyId);
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "delivery.features_backfilled",
+      entityType: "feature",
+      entityId: companyId,
+      details: { created: result.created, skipped: result.skipped },
+    });
+    res.status(201).json(result);
+  });
+
   router.patch("/features/:id", validate(updateFeatureSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await svc.getFeature(id);

@@ -1,12 +1,15 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Link } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Activity,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   CircleDot,
   ClipboardCheck,
+  DatabaseZap,
   FlaskConical,
   GitMerge,
   GitPullRequest,
@@ -232,7 +235,46 @@ function BenjaminRequiredPanel({ issues, agentsById }: { issues: Issue[]; agents
   );
 }
 
-function FeaturesPanel({ features, issues }: { features: Feature[]; issues: Issue[] }) {
+function IconButton({
+  title,
+  icon: Icon,
+  disabled,
+  onClick,
+}: {
+  title: string;
+  icon: LucideIcon;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex h-8 w-8 items-center justify-center border border-border bg-background text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <Icon className="h-4 w-4" />
+    </button>
+  );
+}
+
+function FeaturesPanel({
+  features,
+  issues,
+  onBackfill,
+  backfillPending,
+  onMoveFeature,
+  movePending,
+}: {
+  features: Feature[];
+  issues: Issue[];
+  onBackfill: () => void;
+  backfillPending: boolean;
+  onMoveFeature: (current: Feature, target: Feature, currentRank: number, targetRank: number) => void;
+  movePending: boolean;
+}) {
   const issueFeatures = issues
     .filter((issue) => issue.category === "feature" && isOpenIssue(issue))
     .sort(sortByUpdatedDesc)
@@ -241,20 +283,57 @@ function FeaturesPanel({ features, issues }: { features: Feature[]; issues: Issu
     .slice()
     .sort((a, b) => (a.priorityRank ?? 9999) - (b.priorityRank ?? 9999) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, 10);
+  const moveFeature = (index: number, direction: -1 | 1) => {
+    const targetIndex = index + direction;
+    const current = visibleFeatures[index];
+    const target = visibleFeatures[targetIndex];
+    if (!current || !target) return;
+    onMoveFeature(current, target, current.priorityRank ?? index + 1, target.priorityRank ?? targetIndex + 1);
+  };
   return (
-    <Panel title="Features" icon={ClipboardCheck}>
+    <Panel
+      title="Features"
+      icon={ClipboardCheck}
+      action={
+        <button
+          type="button"
+          onClick={onBackfill}
+          disabled={backfillPending}
+          className="inline-flex h-8 items-center gap-2 border border-border bg-background px-2 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <DatabaseZap className="h-4 w-4" />
+          <span>{backfillPending ? "Backfill..." : "Backfill"}</span>
+        </button>
+      }
+    >
       {visibleFeatures.length === 0 && issueFeatures.length === 0 ? (
         <EmptyPanel text="No active features" />
       ) : (
         <div className="space-y-2">
-          {visibleFeatures.map((feature) => (
+          {visibleFeatures.map((feature, index) => (
             <div key={feature.id} className="border border-border px-3 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-xs text-primary">{feature.featureId}</span>
-                {feature.priorityRank !== null ? <MiniPill>#{feature.priorityRank}</MiniPill> : null}
-                <MiniPill tone={statusTone(feature.intakeStatus)}>{formatLabel(feature.intakeStatus)}</MiniPill>
-                <MiniPill tone={statusTone(feature.deliveryState)}>{formatLabel(feature.deliveryState)}</MiniPill>
-                <MiniPill>{formatLabel(feature.riskLevel)}</MiniPill>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs text-primary">{feature.featureId}</span>
+                  {feature.priorityRank !== null ? <MiniPill>#{feature.priorityRank}</MiniPill> : null}
+                  <MiniPill tone={statusTone(feature.intakeStatus)}>{formatLabel(feature.intakeStatus)}</MiniPill>
+                  <MiniPill tone={statusTone(feature.deliveryState)}>{formatLabel(feature.deliveryState)}</MiniPill>
+                  <MiniPill>{formatLabel(feature.riskLevel)}</MiniPill>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <IconButton
+                    title="Move feature up"
+                    icon={ArrowUp}
+                    disabled={index === 0 || movePending}
+                    onClick={() => moveFeature(index, -1)}
+                  />
+                  <IconButton
+                    title="Move feature down"
+                    icon={ArrowDown}
+                    disabled={index === visibleFeatures.length - 1 || movePending}
+                    onClick={() => moveFeature(index, 1)}
+                  />
+                </div>
               </div>
               <div className="mt-2 line-clamp-1 text-sm font-medium">{feature.title}</div>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -497,6 +576,7 @@ function AutoMergePanel({ candidates }: { candidates: AutoMergeCandidate[] }) {
 
 export function ControlTower() {
   const { selectedCompanyId, companies } = useCompany();
+  const queryClient = useQueryClient();
   const { setBreadcrumbs } = useBreadcrumbs();
 
   useEffect(() => {
@@ -547,6 +627,37 @@ export function ControlTower() {
     queryKey: selectedCompanyId ? queryKeys.agents.list(selectedCompanyId) : ["agents", "__control_tower_disabled__"],
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
+  });
+  const backfillFeaturesMutation = useMutation({
+    mutationFn: () => deliveryControlApi.backfillFeaturesFromIssues(selectedCompanyId!),
+    onSuccess: () => {
+      if (selectedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.deliveryControl.features(selectedCompanyId) });
+      }
+    },
+  });
+  const moveFeatureMutation = useMutation({
+    mutationFn: async ({
+      current,
+      target,
+      currentRank,
+      targetRank,
+    }: {
+      current: Feature;
+      target: Feature;
+      currentRank: number;
+      targetRank: number;
+    }) => {
+      await Promise.all([
+        deliveryControlApi.updateFeature(current.id, { priorityRank: targetRank }),
+        deliveryControlApi.updateFeature(target.id, { priorityRank: currentRank }),
+      ]);
+    },
+    onSuccess: () => {
+      if (selectedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.deliveryControl.features(selectedCompanyId) });
+      }
+    },
   });
 
   const isLoading =
@@ -628,7 +739,16 @@ export function ControlTower() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
-        <FeaturesPanel features={features} issues={activeIssues} />
+        <FeaturesPanel
+          features={features}
+          issues={activeIssues}
+          onBackfill={() => backfillFeaturesMutation.mutate()}
+          backfillPending={backfillFeaturesMutation.isPending}
+          onMoveFeature={(current, target, currentRank, targetRank) =>
+            moveFeatureMutation.mutate({ current, target, currentRank, targetRank })
+          }
+          movePending={moveFeatureMutation.isPending}
+        />
         <EvidencePanel runs={verificationRuns} />
         <HarnessPanel runs={harnessRuns} findings={harnessFindings} />
       </div>
