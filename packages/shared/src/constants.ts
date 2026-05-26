@@ -230,6 +230,8 @@ export const BLOCKER_TYPES = [
   "missing_pr",
   "security_gate",
   "test_gate",
+  "tail_waiting",
+  "waiver_candidate",
   "harness_runtime",
   "credential_binding",
   "approval_benjamin",
@@ -245,6 +247,7 @@ export const REPO_LOCK_STATES = [
   "queued_repo_gate",
   "active_branch",
   "in_review",
+  "verification_tail",
   "locked_cto",
   "blocked_needs_benjamin",
 ] as const;
@@ -263,7 +266,7 @@ export const VERIFICATION_RUN_TYPES = [
 ] as const;
 export type VerificationRunType = (typeof VERIFICATION_RUN_TYPES)[number];
 
-export const VERIFICATION_RUN_STATUSES = ["pass", "fail", "blocked", "inconclusive"] as const;
+export const VERIFICATION_RUN_STATUSES = ["pass", "fail", "blocked", "inconclusive", "in_progress"] as const;
 export type VerificationRunStatus = (typeof VERIFICATION_RUN_STATUSES)[number];
 
 export const TEST_CASE_TYPES = [

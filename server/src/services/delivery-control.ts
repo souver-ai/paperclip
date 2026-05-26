@@ -35,6 +35,9 @@ const AUTO_MERGE_BLOCKING_REPO_STATES = new Set([
   "locked_cto",
   "blocked_needs_benjamin",
 ]);
+const VERIFICATION_TAIL_DELIVERY_STATES = new Set(["merged", "target_verifying"]);
+const TERMINAL_EVIDENCE_DELIVERY_STATES = new Set(["merged_verified", "live_verified", "waived_by_benjamin"]);
+const TARGET_CHECK_STALE_MINUTES = 30;
 const AUTO_MERGE_SENSITIVE_TERMS = [
   "dashboard",
   "auth",
@@ -522,6 +525,54 @@ function pickPrUrl(lock: RepoLockRow | null, runs: VerificationRunRow[]) {
   return lock?.prUrl ?? runs.find((run) => run.prUrl)?.prUrl ?? null;
 }
 
+function hasTerminalEvidence(issue: IssueRow) {
+  return Boolean(issue.terminalEvidence && typeof issue.terminalEvidence === "object" && Object.keys(issue.terminalEvidence).length > 0);
+}
+
+function isVerificationTailIssue(issue: IssueRow) {
+  return VERIFICATION_TAIL_DELIVERY_STATES.has(issue.deliveryState) && !hasTerminalEvidence(issue);
+}
+
+function targetCheckAgeMinutes(runs: VerificationRunRow[], now = new Date()) {
+  const pending = runs
+    .filter((run) => run.status === "in_progress" || (run.startedAt && !run.finishedAt))
+    .sort((a, b) => (b.startedAt ?? b.createdAt).getTime() - (a.startedAt ?? a.createdAt).getTime())[0];
+  if (!pending) return null;
+  const startedAt = pending.startedAt ?? pending.createdAt;
+  return Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 60000));
+}
+
+function classifyVerificationTail(
+  issue: IssueRow,
+  repo: string | null,
+  runs: VerificationRunRow[],
+  now = new Date(),
+): AutoMergeCandidate["verificationTail"] {
+  const latestRuns = [...latestVerificationByType(runs).values()];
+  if (hasTerminalEvidence(issue) || TERMINAL_EVIDENCE_DELIVERY_STATES.has(issue.deliveryState)) {
+    return "terminal_evidence_written" as const;
+  }
+  if (!isVerificationTailIssue(issue)) return "none" as const;
+  if (latestRuns.some((run) => run.status === "fail" || run.status === "blocked")) return "test_gate" as const;
+  const ageMinutes = targetCheckAgeMinutes(latestRuns, now);
+  if (ageMinutes !== null && ageMinutes >= TARGET_CHECK_STALE_MINUTES) {
+    return hasSensitiveAutoMergeSurface(issue, repo) ? "waiver_candidate" : "tail_waiting";
+  }
+  return "pending" as const;
+}
+
+function classifyImplementationSlot(
+  issue: IssueRow,
+  repo: string | null,
+  lock: RepoLockRow | null,
+  tailState: AutoMergeCandidate["verificationTail"],
+): AutoMergeCandidate["implementationSlot"] {
+  if (!isVerificationTailIssue(issue)) return lock?.state === "free" ? "released" : "held";
+  if (tailState === "test_gate") return "held";
+  if (repo === "dashboard" || hasSensitiveAutoMergeSurface(issue, repo)) return "held";
+  return "released";
+}
+
 export function buildAutoMergeCandidates(
   issueRows: IssueRow[],
   lockRows: RepoLockRow[],
@@ -543,6 +594,7 @@ export function buildAutoMergeCandidates(
       (
         issue.autoMergeEligible ||
         issue.deliveryState === "merge_ready" ||
+        VERIFICATION_TAIL_DELIVERY_STATES.has(issue.deliveryState) ||
         Boolean(issue.repoLockId) ||
         locksByIssueId.has(issue.id)
       ),
@@ -552,12 +604,16 @@ export function buildAutoMergeCandidates(
       const runs = verificationByIssueId.get(issue.id) ?? [];
       const latestByType = latestVerificationByType(runs);
       const latestRuns = [...latestByType.values()];
-      const failedRuns = latestRuns.filter((run) => run.status !== "pass");
+      const failedRuns = latestRuns.filter((run) => run.status === "fail" || run.status === "blocked");
+      const inconclusiveRuns = latestRuns.filter((run) => run.status === "inconclusive" || run.status === "in_progress");
       const passedRuns = latestRuns.filter((run) => run.status === "pass");
       const securityRun = latestByType.get("security") ?? null;
       const repo = pickRepo(issue, lock);
       const branch = pickBranch(lock, runs);
       const prUrl = pickPrUrl(lock, runs);
+      const verificationTail = classifyVerificationTail(issue, repo, runs);
+      const implementationSlot = classifyImplementationSlot(issue, repo, lock, verificationTail);
+      const checkAgeMinutes = targetCheckAgeMinutes(latestRuns);
       const reasons: string[] = [];
 
       if (!isOpenIssueStatus(issue.status)) reasons.push("issue_closed");
@@ -567,13 +623,18 @@ export function buildAutoMergeCandidates(
         reasons.push("dashboard_requires_benjamin");
       }
       if (hasSensitiveAutoMergeSurface(issue, repo)) reasons.push("sensitive_surface");
-      if (!AUTO_MERGE_READY_STATES.has(issue.deliveryState)) reasons.push("delivery_state_not_merge_ready");
+      if (!AUTO_MERGE_READY_STATES.has(issue.deliveryState)) {
+        reasons.push(isVerificationTailIssue(issue) ? "verification_tail_pending" : "delivery_state_not_merge_ready");
+      }
       if (!prUrl) reasons.push("missing_pr_url");
       if (lock && AUTO_MERGE_BLOCKING_REPO_STATES.has(lock.state)) reasons.push("repo_lock_not_ready");
       if (lock?.blockerType) reasons.push(`repo_blocker:${lock.blockerType}`);
-      if (issue.blockerType) reasons.push(`issue_blocker:${issue.blockerType}`);
+      if (issue.blockerType && !["tail_waiting", "waiver_candidate"].includes(issue.blockerType)) {
+        reasons.push(`issue_blocker:${issue.blockerType}`);
+      }
       if (failedRuns.length > 0) reasons.push("verification_not_green");
-      if (passedRuns.length === 0) reasons.push("verification_missing");
+      if (inconclusiveRuns.length > 0 && !isVerificationTailIssue(issue)) reasons.push("verification_not_green");
+      if (passedRuns.length === 0 && !isVerificationTailIssue(issue)) reasons.push("verification_missing");
       if (securityRun && securityRun.status !== "pass") reasons.push("security_not_green");
 
       const uniqueReasons = [...new Set(reasons)];
@@ -589,6 +650,9 @@ export function buildAutoMergeCandidates(
         repoLockId: lock?.id ?? issue.repoLockId ?? null,
         repoLockState: (lock?.state as AutoMergeCandidate["repoLockState"]) ?? null,
         blockerType: (issue.blockerType as AutoMergeCandidate["blockerType"]) ?? (lock?.blockerType as AutoMergeCandidate["blockerType"]) ?? null,
+        implementationSlot,
+        verificationTail,
+        targetCheckAgeMinutes: checkAgeMinutes,
         benjaminRequired: issue.benjaminRequired,
         storedAutoMergeEligible: issue.autoMergeEligible,
         eligible: uniqueReasons.length === 0,
@@ -597,7 +661,9 @@ export function buildAutoMergeCandidates(
         failedVerificationCount: failedRuns.length,
         latestVerificationAt: newestVerificationDate(runs),
         securityStatus: securityRun ? (securityRun.status as AutoMergeCandidate["securityStatus"]) : "not_recorded",
-        nextAction: uniqueReasons.length === 0
+        nextAction: verificationTail !== "none"
+          ? `Implementation slot ${implementationSlot}; verification tail ${verificationTail}.`
+          : uniqueReasons.length === 0
           ? "Ready for gated auto-merge outside dashboard."
           : `Resolve: ${uniqueReasons.slice(0, 3).join(", ")}`,
       };
@@ -1049,8 +1115,8 @@ export function deliveryControlService(db: Db) {
     };
   }
 
-  function createVerificationRun(companyId: string, input: CreateVerificationRun) {
-    return db
+  async function createVerificationRun(companyId: string, input: CreateVerificationRun) {
+    const run = await db
       .insert(verificationRuns)
       .values({
         companyId,
@@ -1074,6 +1140,64 @@ export function deliveryControlService(db: Db) {
       })
       .returning()
       .then((rows) => rows[0] ?? null);
+    if (!run?.issueId) return run;
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.id, run.issueId)))
+      .then((rows) => rows[0] ?? null);
+    if (!issue || !isVerificationTailIssue(issue)) return run;
+
+    const repo = run.repo ?? primarySurface(issue);
+    const staleMinutes = targetCheckAgeMinutes([run]);
+    const nextAction =
+      run.status === "fail" || run.status === "blocked"
+        ? "Target verification failed after merge; fix-forward or record an explicit waiver before same-repo implementation resumes."
+        : "Post-merge target verification is still running; keep terminal evidence pending and revisit the tail classification.";
+    if (run.status === "fail" || run.status === "blocked") {
+      await db
+        .update(issues)
+        .set({
+          blockerType: "test_gate",
+          nextAction,
+          updatedAt: new Date(),
+        })
+        .where(eq(issues.id, issue.id));
+      if (repo) {
+        await upsertRepoLock(companyId, {
+          repo,
+          state: "locked_cto",
+          activeIssueId: issue.id,
+          branch: run.branch,
+          prUrl: run.prUrl,
+          blockerType: "test_gate",
+          nextAction,
+        });
+      }
+    } else if (run.status === "in_progress" && staleMinutes !== null && staleMinutes >= TARGET_CHECK_STALE_MINUTES) {
+      const blockerType = hasSensitiveAutoMergeSurface(issue, repo) ? "waiver_candidate" : "tail_waiting";
+      await db
+        .update(issues)
+        .set({
+          blockerType,
+          nextAction: `${nextAction} Current tail age: ${staleMinutes} minutes.`,
+          updatedAt: new Date(),
+        })
+        .where(eq(issues.id, issue.id));
+      if (repo) {
+        await upsertRepoLock(companyId, {
+          repo,
+          state: blockerType === "tail_waiting" ? "verification_tail" : "locked_cto",
+          activeIssueId: issue.id,
+          branch: run.branch,
+          prUrl: run.prUrl,
+          blockerType,
+          nextAction: `${nextAction} Current tail age: ${staleMinutes} minutes.`,
+        });
+      }
+    }
+    return run;
   }
 
   function listHarnessRuns(companyId: string) {

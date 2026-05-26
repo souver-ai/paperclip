@@ -47,9 +47,9 @@ function sortByUpdatedDesc(a: Issue, b: Issue): number {
 }
 
 function statusTone(status: string): PanelTone {
-  if (status === "pass" || status === "free" || status === "merged_verified" || status === "live_verified") return "success";
-  if (status === "fail" || status === "blocked_needs_benjamin" || status === "locked_cto") return "danger";
-  if (status === "blocked" || status === "inconclusive" || status === "queued_repo_gate" || status === "in_review") return "warning";
+  if (status === "pass" || status === "free" || status === "verification_tail" || status === "merged_verified" || status === "live_verified") return "success";
+  if (status === "fail" || status === "test_gate" || status === "blocked_needs_benjamin" || status === "locked_cto") return "danger";
+  if (status === "blocked" || status === "inconclusive" || status === "tail_waiting" || status === "waiver_candidate" || status === "queued_repo_gate" || status === "in_review") return "warning";
   return "default";
 }
 
@@ -327,6 +327,76 @@ function AgentThroughputPanel({ rows }: { rows: AgentThroughput[] }) {
   );
 }
 
+function hasTerminalEvidence(issue: Issue): boolean {
+  return Boolean(issue.terminalEvidence && Object.keys(issue.terminalEvidence).length > 0);
+}
+
+function latestRunForIssue(runs: VerificationRun[], issueId: string): VerificationRun | null {
+  return runs
+    .filter((run) => run.issueId === issueId)
+    .sort((a, b) => new Date(b.finishedAt ?? b.startedAt ?? b.createdAt).getTime() - new Date(a.finishedAt ?? a.startedAt ?? a.createdAt).getTime())[0] ?? null;
+}
+
+function verificationTailLabel(issue: Issue, latestRun: VerificationRun | null): string {
+  if (hasTerminalEvidence(issue)) return "terminal evidence written";
+  if (issue.blockerType === "test_gate" || latestRun?.status === "fail" || latestRun?.status === "blocked") return "test gate";
+  if (issue.blockerType === "waiver_candidate") return "waiver candidate";
+  if (issue.blockerType === "tail_waiting") return "tail waiting";
+  return "pending";
+}
+
+function implementationSlotLabel(issue: Issue, latestRun: VerificationRun | null): string {
+  const tail = verificationTailLabel(issue, latestRun);
+  if (tail === "test gate" || (issue.surfaces ?? []).includes("dashboard")) return "held";
+  return "released";
+}
+
+function DeliveryTailPanel({ issues, runs }: { issues: Issue[]; runs: VerificationRun[] }) {
+  const tailIssues = issues
+    .filter((issue) => issue.status !== "done" && issue.status !== "cancelled")
+    .filter((issue) =>
+      issue.deliveryState === "merged" ||
+      issue.deliveryState === "target_verifying" ||
+      issue.blockerType === "tail_waiting" ||
+      issue.blockerType === "waiver_candidate" ||
+      issue.blockerType === "test_gate",
+    )
+    .sort(sortByUpdatedDesc)
+    .slice(0, 8);
+
+  return (
+    <Panel title="Verification Tail" icon={Activity}>
+      {tailIssues.length === 0 ? (
+        <EmptyPanel text="No async verification tails" />
+      ) : (
+        <div className="space-y-2">
+          {tailIssues.map((issue) => {
+            const latestRun = latestRunForIssue(runs, issue.id);
+            const tailLabel = verificationTailLabel(issue, latestRun);
+            const slotLabel = implementationSlotLabel(issue, latestRun);
+            return (
+              <div key={issue.id} className="border border-border px-3 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link to={issueUrl(issue)} className="font-mono text-xs text-primary hover:underline">
+                    {issue.identifier ?? issue.id.slice(0, 8)}
+                  </Link>
+                  <MiniPill tone={slotLabel === "released" ? "success" : "warning"}>slot {slotLabel}</MiniPill>
+                  <MiniPill tone={statusTone(tailLabel.replace(/ /g, "_"))}>{tailLabel}</MiniPill>
+                  {issue.deliveryState ? <MiniPill tone={statusTone(issue.deliveryState)}>{formatLabel(issue.deliveryState)}</MiniPill> : null}
+                </div>
+                <div className="mt-2 line-clamp-1 text-sm font-medium">{issue.title}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {latestRun ? `${formatLabel(latestRun.type)} ${formatLabel(latestRun.status)} · ${relativeTime(latestRun.finishedAt ?? latestRun.startedAt ?? latestRun.createdAt)}` : "no target run recorded"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function AutoMergePanel({ candidates }: { candidates: AutoMergeCandidate[] }) {
   const visibleCandidates = candidates.slice(0, 8);
   return (
@@ -357,6 +427,14 @@ function AutoMergePanel({ candidates }: { candidates: AutoMergeCandidate[] }) {
                     <div className="mt-1 flex flex-wrap gap-1">
                       <StatusBadge status={candidate.status} />
                       <MiniPill tone={statusTone(candidate.deliveryState)}>{formatLabel(candidate.deliveryState)}</MiniPill>
+                      <MiniPill tone={candidate.implementationSlot === "released" ? "success" : "warning"}>
+                        slot {candidate.implementationSlot}
+                      </MiniPill>
+                      {candidate.verificationTail !== "none" ? (
+                        <MiniPill tone={statusTone(candidate.verificationTail)}>
+                          tail {formatLabel(candidate.verificationTail)}
+                        </MiniPill>
+                      ) : null}
                     </div>
                   </td>
                   <td className="px-2 py-3">
@@ -394,7 +472,10 @@ function AutoMergePanel({ candidates }: { candidates: AutoMergeCandidate[] }) {
                     ) : null}
                   </td>
                   <td className="max-w-[280px] px-2 py-3">
-                    <div className="line-clamp-2 text-muted-foreground">{candidate.nextAction ?? candidate.reasons.join(", ")}</div>
+                    <div className="line-clamp-2 text-muted-foreground">
+                      {candidate.nextAction ?? candidate.reasons.join(", ")}
+                      {candidate.targetCheckAgeMinutes !== null ? ` Age: ${candidate.targetCheckAgeMinutes}m.` : ""}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -514,6 +595,10 @@ export function ControlTower() {
 
       <div className="grid gap-4 xl:grid-cols-2">
         <EvidencePanel runs={verificationRuns} />
+        <DeliveryTailPanel issues={issues} runs={verificationRuns} />
+      </div>
+
+      <div className="grid gap-4">
         <AutoMergePanel candidates={autoMergeCandidates} />
       </div>
 

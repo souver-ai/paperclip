@@ -19,6 +19,15 @@ import type {
   TestCaseType,
 } from "../constants.js";
 
+export type ImplementationSlotState = "held" | "released";
+export type VerificationTailState =
+  | "none"
+  | "pending"
+  | "tail_waiting"
+  | "test_gate"
+  | "waiver_candidate"
+  | "terminal_evidence_written";
+
 export interface RepoLock {
   id: string;
   companyId: string;
@@ -217,6 +226,9 @@ export interface AutoMergeCandidate {
   repoLockId: string | null;
   repoLockState: RepoLockState | null;
   blockerType: BlockerType | null;
+  implementationSlot: ImplementationSlotState;
+  verificationTail: VerificationTailState;
+  targetCheckAgeMinutes: number | null;
   benjaminRequired: boolean;
   storedAutoMergeEligible: boolean;
   eligible: boolean;

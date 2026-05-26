@@ -156,6 +156,8 @@ export type {
   Feature,
   FeaturePriorityEvent,
   AutoMergeCandidate,
+  ImplementationSlotState,
+  VerificationTailState,
 } from "./delivery-control.js";
 
 export type {
