@@ -113,6 +113,7 @@ export function Sidebar() {
         <SidebarSection label="Work">
           <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />
           <SidebarNavItem to="/features" label="Features" icon={ListChecks} />
+          <SidebarNavItem to="/harness" label="Harness" icon={FlaskConical} />
           <SidebarNavItem to="/tests" label="Tests" icon={FlaskConical} />
           <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
           <SidebarNavItem to="/goals" label="Goals" icon={Target} />

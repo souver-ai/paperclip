@@ -7,6 +7,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { DashboardLive } from "./pages/DashboardLive";
 import { ControlTower } from "./pages/ControlTower";
 import { Features } from "./pages/Features";
+import { Harness } from "./pages/Harness";
 import { Tests } from "./pages/Tests";
 import { Companies } from "./pages/Companies";
 import { Agents } from "./pages/Agents";
@@ -102,6 +103,7 @@ function boardRoutes() {
       <Route path="projects/:projectId/budget" element={<ProjectDetail />} />
       <Route path="workspaces" element={<Workspaces />} />
       <Route path="features" element={<Features />} />
+      <Route path="harness" element={<Harness />} />
       <Route path="tests" element={<Tests />} />
       <Route path="issues" element={<Issues />} />
       <Route path="search" element={<Search />} />
