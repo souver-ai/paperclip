@@ -5,6 +5,7 @@ import {
   createVerificationRunSchema,
   updateRepoLockSchema,
   upsertRepoLockSchema,
+  upsertTestCaseSchema,
 } from "./delivery-control.js";
 
 describe("delivery control validators", () => {
@@ -35,6 +36,27 @@ describe("delivery control validators", () => {
 
     expect(parsed.status).toBe("pass");
     expect(parsed.artifactPaths).toEqual(["reports/verification/delivery-control.md"]);
+  });
+
+  it("accepts read-only test case metadata while keeping proof status explicit", () => {
+    const parsed = upsertTestCaseSchema.parse({
+      stableKey: "desktop-cwd-access-refresh",
+      title: "desktop-cwd-access-refresh",
+      repo: "desktop",
+      type: "e2e",
+      trigger: "per_delivery",
+      command: "pnpm --filter @souver/desktop test:e2e",
+      owner: "Test Architect",
+      requiredForDelivery: true,
+      visibleRunnable: false,
+      status: "active",
+      source: "regression_ledger",
+      lastStatus: "missing",
+      nextAction: "Run required before this test can be terminal evidence.",
+    });
+
+    expect(parsed.owner).toBe("Test Architect");
+    expect(parsed.lastStatus).toBe("missing");
   });
 
   it("accepts harness run findings with anti-recurrence routing", () => {

@@ -7,6 +7,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { DashboardLive } from "./pages/DashboardLive";
 import { ControlTower } from "./pages/ControlTower";
 import { Features } from "./pages/Features";
+import { Tests } from "./pages/Tests";
 import { Companies } from "./pages/Companies";
 import { Agents } from "./pages/Agents";
 import { AgentDetail } from "./pages/AgentDetail";
@@ -101,6 +102,7 @@ function boardRoutes() {
       <Route path="projects/:projectId/budget" element={<ProjectDetail />} />
       <Route path="workspaces" element={<Workspaces />} />
       <Route path="features" element={<Features />} />
+      <Route path="tests" element={<Tests />} />
       <Route path="issues" element={<Issues />} />
       <Route path="search" element={<Search />} />
       <Route path="issues/all" element={<Navigate to="/issues" replace />} />
@@ -292,6 +294,7 @@ export function App() {
           </Route>
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="control-tower" element={<UnprefixedBoardRedirect />} />
+          <Route path="tests" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
           <Route path="routines" element={<UnprefixedBoardRedirect />} />

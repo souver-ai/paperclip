@@ -1,0 +1,62 @@
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { companies } from "./companies.js";
+import { issues } from "./issues.js";
+import { verificationRuns } from "./verification_runs.js";
+
+export const testCases = pgTable(
+  "test_cases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    stableKey: text("stable_key").notNull(),
+    title: text("title").notNull(),
+    repo: text("repo"),
+    productArea: text("product_area"),
+    featureIds: jsonb("feature_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    issueIds: jsonb("issue_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    type: text("type").notNull(),
+    trigger: text("trigger").notNull(),
+    command: text("command"),
+    owner: text("owner"),
+    environment: text("environment"),
+    riskCovered: text("risk_covered"),
+    requiredForDelivery: boolean("required_for_delivery").notNull().default(false),
+    visibleRunnable: boolean("visible_runnable").notNull().default(false),
+    expectedDurationSec: integer("expected_duration_sec"),
+    status: text("status").notNull().default("designed"),
+    source: text("source").notNull(),
+    sourcePath: text("source_path"),
+    lastRunId: uuid("last_run_id").references(() => verificationRuns.id, { onDelete: "set null" }),
+    lastStatus: text("last_status"),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastCommitSha: text("last_commit_sha"),
+    lastBranch: text("last_branch"),
+    lastPrUrl: text("last_pr_url"),
+    artifactRefs: jsonb("artifact_refs").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    gapIssueId: uuid("gap_issue_id").references(() => issues.id, { onDelete: "set null" }),
+    flakyReason: text("flaky_reason"),
+    waiver: jsonb("waiver").$type<Record<string, unknown> | null>(),
+    nextAction: text("next_action"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    companyStableKeyIdx: uniqueIndex("test_cases_company_stable_key_uq").on(table.companyId, table.stableKey),
+    companyRepoIdx: index("test_cases_company_repo_idx").on(table.companyId, table.repo),
+    companyTypeIdx: index("test_cases_company_type_idx").on(table.companyId, table.type),
+    companyStatusIdx: index("test_cases_company_status_idx").on(table.companyId, table.status),
+    companyLastStatusIdx: index("test_cases_company_last_status_idx").on(table.companyId, table.lastStatus),
+    lastRunIdx: index("test_cases_last_run_idx").on(table.lastRunId),
+  }),
+);

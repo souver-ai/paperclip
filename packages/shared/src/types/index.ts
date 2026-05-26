@@ -148,6 +148,8 @@ export type {
 export type {
   RepoLock,
   VerificationRun,
+  TestCase,
+  TestCaseBackfillSummary,
   HarnessRun,
   HarnessFinding,
   AgentThroughput,

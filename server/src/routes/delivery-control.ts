@@ -5,6 +5,7 @@ import {
   createHarnessRunSchema,
   createFeatureSchema,
   createVerificationRunSchema,
+  upsertTestCaseSchema,
   updateFeatureSchema,
   updateHarnessFindingSchema,
   updateRepoLockSchema,
@@ -167,6 +168,62 @@ export function deliveryControlRoutes(db: Db) {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     res.json(await svc.listVerificationRuns(companyId));
+  });
+
+  router.get("/companies/:companyId/test-cases", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await svc.listTestCases(companyId));
+  });
+
+  router.post("/companies/:companyId/test-cases/backfill-souver", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const actor = getActorInfo(req);
+    const result = await svc.backfillSouverTestCases(companyId);
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "delivery.test_cases_backfilled",
+      entityType: "test_case",
+      entityId: companyId,
+      details: {
+        imported: result.imported,
+        created: result.created,
+        updated: result.updated,
+        byRepo: result.byRepo,
+        byType: result.byType,
+        byLastStatus: result.byLastStatus,
+      },
+    });
+    res.status(201).json(result);
+  });
+
+  router.post("/companies/:companyId/test-cases", validate(upsertTestCaseSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const actor = getActorInfo(req);
+    const result = await svc.upsertTestCases(companyId, [req.body]);
+    const testCase = result.tests[0] ?? null;
+    if (!testCase) {
+      res.status(422).json({ error: "Invalid test case payload" });
+      return;
+    }
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "delivery.test_case_upserted",
+      entityType: "test_case",
+      entityId: testCase.id,
+      details: { stableKey: testCase.stableKey, repo: testCase.repo, type: testCase.type, status: testCase.status },
+    });
+    res.status(result.created > 0 ? 201 : 200).json(testCase);
   });
 
   router.post("/companies/:companyId/verification-runs", validate(createVerificationRunSchema), async (req, res) => {
