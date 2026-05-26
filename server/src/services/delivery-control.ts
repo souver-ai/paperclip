@@ -51,8 +51,30 @@ const AUTO_MERGE_SENSITIVE_TERMS = [
 
 type IssueRow = typeof issues.$inferSelect;
 type FeatureRow = typeof features.$inferSelect;
+type AgentRow = typeof agents.$inferSelect;
 type RepoLockRow = typeof repoLocks.$inferSelect;
 type VerificationRunRow = typeof verificationRuns.$inferSelect;
+
+const FEATURE_BACKFILL_AGENT_NAMES = new Set(["Dev Feature", "PM Feature"]);
+const FEATURE_BACKFILL_PRODUCT_PREFIXES = ["[desktop]", "[dashboard]", "[cli]", "[feature]"];
+const FEATURE_BACKFILL_EXCLUDED_TERMS = [
+  "[cto]",
+  "[security",
+  "[process",
+  "[harness",
+  "anti-recurrence",
+  "approval",
+  "credential",
+  "dispatcher",
+  "false-done",
+  "harness",
+  "preflight",
+  "repo steward",
+  "routine",
+  "security review",
+  "token",
+  "worktree",
+];
 
 function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
@@ -91,16 +113,31 @@ function featureIdFromIssue(issue: IssueRow): string {
   return `ISSUE-${issue.id.slice(0, 8)}`;
 }
 
+function isFeatureBackfillIssue(issue: IssueRow, agentsById: Map<string, AgentRow>) {
+  if (!isOpenIssueStatus(issue.status) || issue.hiddenAt != null) return false;
+  if (issue.category === "feature") return true;
+
+  const haystack = `${issue.title ?? ""}\n${issue.description ?? ""}`.toLowerCase();
+  if (FEATURE_BACKFILL_EXCLUDED_TERMS.some((term) => haystack.includes(term))) return false;
+
+  const assigneeName = issue.assigneeAgentId ? agentsById.get(issue.assigneeAgentId)?.name : null;
+  if (assigneeName && FEATURE_BACKFILL_AGENT_NAMES.has(assigneeName)) return true;
+  if (FEATURE_BACKFILL_PRODUCT_PREFIXES.some((prefix) => haystack.startsWith(prefix))) return true;
+  return /\bfeature\b/.test(haystack);
+}
+
 export function buildFeatureBackfillCandidates(
   issueRows: IssueRow[],
   existingFeatureRows: FeatureRow[],
+  agentRows: AgentRow[] = [],
 ): CreateFeature[] {
+  const agentsById = new Map(agentRows.map((agent) => [agent.id, agent]));
   const existingRootIssueIds = new Set(existingFeatureRows.map((feature) => feature.rootIssueId).filter(Boolean));
   const existingFeatureIds = new Set(existingFeatureRows.map((feature) => feature.featureId));
   const maxRank = existingFeatureRows.reduce((max, feature) => Math.max(max, feature.priorityRank ?? 0), 0);
 
   return issueRows
-    .filter((issue) => issue.category === "feature" && isOpenIssueStatus(issue.status) && issue.hiddenAt == null)
+    .filter((issue) => isFeatureBackfillIssue(issue, agentsById))
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .reduce<CreateFeature[]>((candidates, issue) => {
       const featureId = featureIdFromIssue(issue);
@@ -324,19 +361,19 @@ export function deliveryControlService(db: Db) {
   }
 
   async function backfillFeaturesFromIssues(companyId: string) {
-    const [issueRows, existingFeatureRows] = await Promise.all([
+    const [issueRows, existingFeatureRows, agentRows] = await Promise.all([
       db
         .select()
         .from(issues)
         .where(and(
           eq(issues.companyId, companyId),
-          eq(issues.category, "feature"),
           sql`${issues.hiddenAt} is null`,
           sql`${issues.status} not in ('done', 'cancelled')`,
         )),
       db.select().from(features).where(eq(features.companyId, companyId)),
+      db.select().from(agents).where(eq(agents.companyId, companyId)),
     ]);
-    const candidates = buildFeatureBackfillCandidates(issueRows, existingFeatureRows);
+    const candidates = buildFeatureBackfillCandidates(issueRows, existingFeatureRows, agentRows);
     if (candidates.length === 0) {
       return { created: 0, skipped: issueRows.length, features: [] };
     }

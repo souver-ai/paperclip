@@ -148,6 +148,57 @@ describe("buildFeatureBackfillCandidates", () => {
     ]);
   });
 
+  it("backfills uncategorized issues owned by feature agents", () => {
+    const candidates = buildFeatureBackfillCandidates(
+      [
+        issue({
+          id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          category: "uncategorized",
+          status: "backlog",
+          identifier: "SOU-44",
+          title: "[Desktop] Add delivery rail controls",
+          assigneeAgentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        }),
+      ],
+      [],
+      [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Dev Feature" }] as any,
+    );
+
+    expect(candidates).toEqual([
+      expect.objectContaining({
+        featureId: "SOU-44",
+        intakeStatus: "ready_for_priority",
+      }),
+    ]);
+  });
+
+  it("keeps process and security issues out of the feature board", () => {
+    const candidates = buildFeatureBackfillCandidates(
+      [
+        issue({
+          id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          category: "uncategorized",
+          status: "backlog",
+          identifier: "SOU-44",
+          title: "[Security Review] Patch dashboard auth findings",
+          assigneeAgentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        }),
+        issue({
+          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          category: "uncategorized",
+          status: "backlog",
+          identifier: "SOU-45",
+          title: "Routine — Repo Steward / Worktree Janitor",
+          assigneeAgentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        }),
+      ],
+      [],
+      [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Dev Feature" }] as any,
+    );
+
+    expect(candidates).toHaveLength(0);
+  });
+
   it("skips closed issues and issues that already have a native feature", () => {
     const candidates = buildFeatureBackfillCandidates(
       [
