@@ -141,6 +141,8 @@ describe("issue telemetry routes", () => {
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         status: "done",
+        deliveryState: "merged_verified",
+        terminalEvidence: { kind: "target_branch_verified", command: "pnpm test issue-telemetry-routes" },
         deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-telemetry-routes" }],
       });
 
@@ -167,6 +169,8 @@ describe("issue telemetry routes", () => {
       .patch("/api/issues/11111111-1111-4111-8111-111111111111")
       .send({
         status: "done",
+        deliveryState: "merged_verified",
+        terminalEvidence: { kind: "target_branch_verified", command: "pnpm test issue-telemetry-routes" },
         deliveryProofs: [{ name: "Unit proof", command: "pnpm test issue-telemetry-routes" }],
       });
 
