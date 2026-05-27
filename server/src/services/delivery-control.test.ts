@@ -113,6 +113,94 @@ describe("buildAutoMergeCandidates", () => {
       "verification_not_green",
     ]));
   });
+
+  it("releases implementation slot for merged low-risk tails without terminal evidence", () => {
+    const [candidate] = buildAutoMergeCandidates(
+      [issue({
+        deliveryState: "merged",
+        terminalEvidence: null,
+        title: "CLI merged low-risk fix",
+        surfaces: ["app_cli"],
+      })],
+      [lock({
+        state: "verification_tail",
+        blockerType: null,
+      })],
+      [verification({
+        status: "in_progress",
+        startedAt: new Date("2026-05-26T01:00:00.000Z"),
+        finishedAt: null,
+        createdAt: new Date("2026-05-26T01:00:00.000Z"),
+      })],
+      new Date("2026-05-26T01:10:00.000Z"),
+    );
+
+    expect(candidate).toMatchObject({
+      eligible: false,
+      implementationSlot: "released",
+      verificationTail: "pending",
+      blockerType: null,
+    });
+    expect(candidate?.reasons).toContain("verification_tail_pending");
+  });
+
+  it("holds implementation slot when merged target verification fails", () => {
+    const [candidate] = buildAutoMergeCandidates(
+      [issue({
+        deliveryState: "merged",
+        blockerType: "test_gate",
+        terminalEvidence: null,
+      })],
+      [lock({
+        state: "locked_cto",
+        blockerType: "test_gate",
+      })],
+      [verification({
+        status: "fail",
+        failureCategory: "test_failure",
+      })],
+    );
+
+    expect(candidate).toMatchObject({
+      implementationSlot: "held",
+      verificationTail: "test_gate",
+      blockerType: "test_gate",
+      eligible: false,
+    });
+    expect(candidate?.reasons).toEqual(expect.arrayContaining([
+      "repo_lock_not_ready",
+      "repo_blocker:test_gate",
+      "issue_blocker:test_gate",
+      "verification_not_green",
+    ]));
+  });
+
+  it("classifies stale in-progress verification tails after thirty minutes", () => {
+    const [candidate] = buildAutoMergeCandidates(
+      [issue({
+        deliveryState: "merged",
+        terminalEvidence: null,
+        blockerType: "tail_waiting",
+      })],
+      [lock({
+        state: "verification_tail",
+        blockerType: "tail_waiting",
+      })],
+      [verification({
+        status: "in_progress",
+        startedAt: new Date("2026-05-26T00:00:00.000Z"),
+        finishedAt: null,
+        createdAt: new Date("2026-05-26T00:00:00.000Z"),
+      })],
+      new Date("2026-05-26T00:45:00.000Z"),
+    );
+
+    expect(candidate).toMatchObject({
+      implementationSlot: "released",
+      verificationTail: "tail_waiting",
+    });
+    expect(candidate?.reasons).not.toContain("issue_blocker:tail_waiting");
+  });
 });
 
 describe("buildFeatureBackfillCandidates", () => {

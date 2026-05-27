@@ -16,10 +16,11 @@ describe("delivery control validators", () => {
       activeIssueId: "11111111-1111-4111-8111-111111111111",
       branch: "paperclip/SOU-123-clean-repo",
       nextAction: "Rebase branch on main before waking Dev Feature.",
-      blockerType: "branch_stale",
+      blockerType: "tail_waiting",
     });
 
     expect(parsed.state).toBe("locked_cto");
+    expect(parsed.blockerType).toBe("tail_waiting");
     expect(updateRepoLockSchema.safeParse({ blockerType: "vibes" }).success).toBe(false);
   });
 
@@ -28,13 +29,13 @@ describe("delivery control validators", () => {
       issueId: "11111111-1111-4111-8111-111111111111",
       repo: "paperclip",
       type: "unit",
-      status: "pass",
+      status: "in_progress",
       command: "pnpm vitest run packages/shared/src/validators/delivery-control.test.ts",
       artifactPaths: ["reports/verification/delivery-control.md"],
       verdictSummary: "Delivery control validators pass.",
     });
 
-    expect(parsed.status).toBe("pass");
+    expect(parsed.status).toBe("in_progress");
     expect(parsed.artifactPaths).toEqual(["reports/verification/delivery-control.md"]);
   });
 
