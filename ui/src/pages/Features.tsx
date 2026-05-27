@@ -68,6 +68,7 @@ function toneClasses(tone: Tone): string {
 const BUCKET_TONE: Record<FeatureBucket, Tone> = {
   delivered: "success",
   delivered_unmerged: "caution",
+  done_noncode: "default",
   in_delivery: "info",
   queued: "warning",
   parked: "default",
@@ -77,6 +78,7 @@ const BUCKET_TONE: Record<FeatureBucket, Tone> = {
 const BUCKET_LABEL: Record<FeatureBucket, string> = {
   delivered: "Delivered",
   delivered_unmerged: "Done · unmerged",
+  done_noncode: "Done (non-code)",
   in_delivery: "In delivery",
   queued: "Queued",
   parked: "Parked",
@@ -84,7 +86,7 @@ const BUCKET_LABEL: Record<FeatureBucket, string> = {
 };
 
 function bucketOf(feature: Feature): FeatureBucket {
-  return featureBucket(feature.intakeStatus, feature.deliveryState);
+  return featureBucket(feature.intakeStatus, feature.deliveryState, feature.title);
 }
 
 function Pill({ children, tone = "default" }: { children: ReactNode; tone?: Tone }) {

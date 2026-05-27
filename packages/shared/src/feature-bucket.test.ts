@@ -9,9 +9,18 @@ describe("featureBucket", () => {
   });
 
   it("flags delivered intake that never reached main as done-but-unmerged", () => {
-    expect(featureBucket("delivered", "active_branch")).toBe("delivered_unmerged");
-    expect(featureBucket("delivered", "pr_ready")).toBe("delivered_unmerged");
-    expect(featureBucket("delivered", "intake")).toBe("delivered_unmerged");
+    expect(featureBucket("delivered", "active_branch", "[Desktop] Câbler web_search")).toBe("delivered_unmerged");
+    expect(featureBucket("delivered", "pr_ready", "Background task browser")).toBe("delivered_unmerged");
+    expect(featureBucket("delivered", "intake", "Real Desktop Plan Mode")).toBe("delivered_unmerged");
+  });
+
+  it("classifies done non-code work (review/spec/PM) separately", () => {
+    expect(featureBucket("delivered", "intake", "[Test Review] Review SOU-831 coverage")).toBe("done_noncode");
+    expect(featureBucket("delivered", "intake", "B-002 Plan vs Build spec (PM)")).toBe("done_noncode");
+    expect(featureBucket("delivered", "intake", "Unblock SOU-118 workflow status")).toBe("done_noncode");
+    expect(featureBucket("delivered", "intake", "Validate Plan/Build gating matrix")).toBe("done_noncode");
+    // merged non-code still counts as delivered
+    expect(featureBucket("delivered", "merged_verified", "[Review] something")).toBe("delivered");
   });
 
   it("maps rejected to abandoned and parked to parked", () => {

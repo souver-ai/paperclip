@@ -229,11 +229,39 @@ export const FEATURE_DELIVERED_DELIVERY_STATES = [
   "waived_by_benjamin",
 ] as const;
 
-// Coarse buckets surfaced in the Features view. Derived from (intakeStatus, deliveryState)
+// Markers for work items that produce no code artifact (reviews, specs, PM decisions,
+// test plans, triage, unblocks). Such items can never "merge", so a done one should not be
+// shown as done-but-unmerged. Used by both the Features and Harness lifecycle buckets.
+const NONCODE_WORK_MARKERS = [
+  "[reopen_review]",
+  "review]", // [Test Review], [Security Review], [Review]
+  "[pm",
+  "[process",
+  "[architecture review]",
+  "spec (pm)",
+  "test plan",
+  "architecture review",
+  "qa review",
+  " decide ",
+  " classify ",
+  " unblock ",
+  " validate ",
+  " verify ",
+  " triage ",
+];
+
+export function isNonCodeWork(title: string | null | undefined): boolean {
+  if (!title) return false;
+  const t = ` ${title.toLowerCase()} `;
+  return NONCODE_WORK_MARKERS.some((marker) => t.includes(marker));
+}
+
+// Coarse buckets surfaced in the Features view. Derived from (intakeStatus, deliveryState, title)
 // so the table is exhaustive and reflects reality, not just the in-flight subset.
 export const FEATURE_BUCKETS = [
   "delivered",
   "delivered_unmerged",
+  "done_noncode",
   "in_delivery",
   "queued",
   "parked",
@@ -244,13 +272,15 @@ export type FeatureBucket = (typeof FEATURE_BUCKETS)[number];
 export function featureBucket(
   intakeStatus: FeatureIntakeStatus | string,
   deliveryState: DeliveryState | string,
+  title?: string | null,
 ): FeatureBucket {
   if (intakeStatus === "rejected") return "abandoned";
   if (intakeStatus === "parked") return "parked";
   if (intakeStatus === "delivered") {
-    return (FEATURE_DELIVERED_DELIVERY_STATES as readonly string[]).includes(deliveryState)
-      ? "delivered"
-      : "delivered_unmerged";
+    if ((FEATURE_DELIVERED_DELIVERY_STATES as readonly string[]).includes(deliveryState)) return "delivered";
+    // Done with no code artifact (review/spec/PM/etc.) — never mergeable, so not "unmerged".
+    if (isNonCodeWork(title)) return "done_noncode";
+    return "delivered_unmerged";
   }
   if (intakeStatus === "in_delivery" || intakeStatus === "selected") return "in_delivery";
   return "queued";
