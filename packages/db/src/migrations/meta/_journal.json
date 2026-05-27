@@ -624,6 +624,13 @@
       "when": 1779818400000,
       "tag": "0088_test_cases",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1779822000000,
+      "tag": "0089_delivery_verification_tail",
+      "breakpoints": true
     }
   ]
 }
