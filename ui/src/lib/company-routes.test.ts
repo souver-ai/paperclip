@@ -42,4 +42,13 @@ describe("company routes", () => {
     expect(applyCompanyPrefix("/approvals/pending", "SOU")).toBe("/SOU/approvals/pending");
     expect(toCompanyRelativePath("/SOU/approvals/approval-123")).toBe("/approvals/approval-123");
   });
+  it("treats harness and tests as board routes that need a company prefix", () => {
+    expect(isBoardPathWithoutPrefix("/harness")).toBe(true);
+    expect(isBoardPathWithoutPrefix("/tests")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/harness")).toBeNull();
+    expect(applyCompanyPrefix("/harness", "SOU")).toBe("/SOU/harness");
+    expect(applyCompanyPrefix("/tests/run-42", "SOU")).toBe("/SOU/tests/run-42");
+    expect(toCompanyRelativePath("/SOU/harness")).toBe("/harness");
+    expect(toCompanyRelativePath("/SOU/tests/run-42")).toBe("/tests/run-42");
+  });
 });

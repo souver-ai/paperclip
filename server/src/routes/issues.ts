@@ -113,6 +113,11 @@ import {
 } from "../services/issue-execution-policy.js";
 import { parseIssueExecutionWorkspaceSettings } from "../services/execution-workspace-policy.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
+import {
+  buildDeliveryTransitionWakeup,
+  resolveDeliveryTransitionRoute,
+  type DeliveryTransitionRoute,
+} from "../services/delivery-transition-trigger.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -122,6 +127,7 @@ const updateIssueWithDeliveryProofsRouteSchema = updateIssueRouteSchema.extend({
   deliveryProofs: z.array(createIssueDeliveryProofSchema).max(20).optional(),
 });
 const DONE_DELIVERY_STATES = new Set(["merged_verified", "live_verified", "waived_by_benjamin"]);
+const REOPENED_STATUS_VALUES = new Set(["backlog", "todo", "in_progress", "in_review", "blocked"]);
 const DELIVERY_STATE_VALUES = new Set<string>(DELIVERY_STATES);
 const BLOCKER_TYPE_VALUES = new Set<string>(BLOCKER_TYPES);
 const CONTROL_TOWER_UPDATE_KEYS = new Set([
@@ -764,6 +770,25 @@ function parseControlTowerIssuePatch(body: string) {
   }
 
   return Object.keys(patch).length > 0 ? patch : null;
+}
+
+function isAgentTerminalDeliveryRegression(
+  existing: { status: string; deliveryState: string },
+  patch: Record<string, unknown>,
+) {
+  if (existing.status !== "done" || !DONE_DELIVERY_STATES.has(existing.deliveryState)) return false;
+  const requestedStatus = typeof patch.status === "string" ? patch.status : existing.status;
+  const requestedDeliveryState =
+    typeof patch.deliveryState === "string" ? patch.deliveryState : existing.deliveryState;
+  return REOPENED_STATUS_VALUES.has(requestedStatus) || !DONE_DELIVERY_STATES.has(requestedDeliveryState);
+}
+
+function respondTerminalDeliveryRegression(res: Response) {
+  res.status(409).json({
+    error: "Terminal delivery state cannot be regressed by an agent update",
+    code: "terminal_delivery_state_regression",
+    requiredActor: "board",
+  });
 }
 
 function shouldImplicitlyMoveCommentedIssueToTodo(input: {
@@ -3226,6 +3251,13 @@ export function issueRoutes(
         actor.actorType,
       );
     }
+    if (
+      req.actor.type === "agent" &&
+      isAgentTerminalDeliveryRegression(existing, updateFields)
+    ) {
+      respondTerminalDeliveryRegression(res);
+      return;
+    }
     const previousExecutionPolicy = normalizeIssueExecutionPolicy(existing.executionPolicy ?? null);
     const nextExecutionPolicy =
       updateFields.executionPolicy !== undefined
@@ -3267,6 +3299,62 @@ export function issueRoutes(
       };
     }
     Object.assign(updateFields, transition.patch);
+    let deliveryTransitionRoute: DeliveryTransitionRoute | null = null;
+    const requestedDeliveryState =
+      typeof updateFields.deliveryState === "string" ? updateFields.deliveryState : existing.deliveryState;
+    const deliveryStateChanged =
+      typeof updateFields.deliveryState === "string" && updateFields.deliveryState !== existing.deliveryState;
+    const blockerTypeChanged =
+      updateFields.blockerType !== undefined && updateFields.blockerType !== existing.blockerType;
+    const explicitAssigneePatch =
+      normalizedAssigneeAgentId !== undefined ||
+      updateFields.assigneeAgentId !== undefined ||
+      updateFields.assigneeUserId !== undefined;
+    const shouldReconcileDeliveryOwner =
+      !deliveryStateChanged &&
+      !explicitAssigneePatch &&
+      typeof requestedDeliveryState === "string" &&
+      !["backlog", "done", "cancelled"].includes(existing.status);
+    if (deliveryStateChanged || blockerTypeChanged || shouldReconcileDeliveryOwner) {
+      let companyAgents: Awaited<ReturnType<typeof agentsSvc.list>> = [];
+      try {
+        companyAgents = await agentsSvc.list(existing.companyId);
+      } catch (err) {
+        logger.warn({ err, issueId: existing.id }, "failed to list agents for delivery transition trigger");
+      }
+      const nextBlockerType =
+        updateFields.blockerType === undefined ? existing.blockerType : (updateFields.blockerType as string | null);
+      const nextBenjaminRequired =
+        updateFields.benjaminRequired === undefined
+          ? existing.benjaminRequired
+          : (updateFields.benjaminRequired as boolean | null);
+      deliveryTransitionRoute = resolveDeliveryTransitionRoute({
+        previousIssue: existing,
+        nextDeliveryState: requestedDeliveryState,
+        nextBlockerType,
+        nextBenjaminRequired,
+        agents: companyAgents,
+        allowCurrentState: shouldReconcileDeliveryOwner,
+      });
+      if (
+        shouldReconcileDeliveryOwner &&
+        deliveryTransitionRoute?.targetAgentId &&
+        existing.assigneeAgentId === deliveryTransitionRoute.targetAgentId &&
+        !existing.assigneeUserId
+      ) {
+        deliveryTransitionRoute = null;
+      }
+      if (
+        deliveryTransitionRoute?.targetAgentId &&
+        normalizedAssigneeAgentId === undefined &&
+        updateFields.assigneeAgentId === undefined
+      ) {
+        updateFields.assigneeAgentId = deliveryTransitionRoute.targetAgentId;
+        if (updateFields.assigneeUserId === undefined) {
+          updateFields.assigneeUserId = null;
+        }
+      }
+    }
     const nextStatus = typeof updateFields.status === "string" ? updateFields.status : existing.status;
     const isDoneTransitionRequested = existing.status !== "done" && nextStatus === "done";
     if (isDoneTransitionRequested) {
@@ -3327,7 +3415,11 @@ export function issueRoutes(
       nextAssigneeUserId === existing.createdByUserId;
 
     if (assigneeWillChange && !transition.workflowControlledAssignment) {
-      if (!isAgentReturningIssueToCreator) {
+      const deliveryTransitionControlledAssignment =
+        Boolean(deliveryTransitionRoute?.targetAgentId) &&
+        nextAssigneeAgentId === deliveryTransitionRoute?.targetAgentId &&
+        normalizedAssigneeAgentId === undefined;
+      if (!isAgentReturningIssueToCreator && !deliveryTransitionControlledAssignment) {
         await assertCanAssignTasks(req, existing.companyId);
       }
     }
@@ -3546,6 +3638,29 @@ export function issueRoutes(
         ),
       },
     });
+
+    if (deliveryTransitionRoute) {
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: deliveryTransitionRoute.targetAgentId
+          ? "issue.delivery_transition_routed"
+          : "issue.delivery_transition_route_missing",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          identifier: issue.identifier,
+          fromDeliveryState: deliveryTransitionRoute.fromState,
+          toDeliveryState: deliveryTransitionRoute.toState,
+          targetAgentName: deliveryTransitionRoute.targetAgentName,
+          targetAgentId: deliveryTransitionRoute.targetAgentId,
+          wakeReason: deliveryTransitionRoute.wakeReason,
+        },
+      });
+    }
 
     if (existing.status === "in_progress" && issue.status !== existing.status && issue.status !== "in_progress") {
       await listSuccessfulRunHandoffStates(db, issue.companyId, [issue.id])
@@ -3812,12 +3927,25 @@ export function issueRoutes(
     void (async () => {
       type WakeupRequest = NonNullable<Parameters<typeof heartbeat.wakeup>[1]>;
       const wakeups = new Map<string, { agentId: string; wakeup: WakeupRequest }>();
+      const isDeliveryTransitionWakeup = (wakeup: WakeupRequest) => {
+        const context =
+          wakeup.contextSnapshot && typeof wakeup.contextSnapshot === "object"
+            ? wakeup.contextSnapshot
+            : {};
+        const payload = wakeup.payload && typeof wakeup.payload === "object" ? wakeup.payload : {};
+        return context.deliveryTransitionWake === true || payload.deliveryTransitionWake === true;
+      };
       const addWakeup = (agentId: string, wakeup: WakeupRequest) => {
         const wakeIssueId =
           wakeup.payload && typeof wakeup.payload === "object" && typeof wakeup.payload.issueId === "string"
             ? wakeup.payload.issueId
             : issue.id;
-        wakeups.set(`${agentId}:${wakeIssueId}`, { agentId, wakeup });
+        const key = `${agentId}:${wakeIssueId}`;
+        const existing = wakeups.get(key);
+        if (existing && isDeliveryTransitionWakeup(existing.wakeup) && !isDeliveryTransitionWakeup(wakeup)) {
+          return;
+        }
+        wakeups.set(key, { agentId, wakeup });
       };
 
       if (executionStageWakeup) {
@@ -3850,6 +3978,18 @@ export function issueRoutes(
             ...(interruptedRunId ? { interruptedRunId } : {}),
           },
         });
+      }
+
+      if (deliveryTransitionRoute) {
+        const deliveryWakeup = buildDeliveryTransitionWakeup({
+          issue,
+          route: deliveryTransitionRoute,
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+        });
+        if (deliveryWakeup) {
+          addWakeup(deliveryWakeup.agentId, deliveryWakeup.wakeup);
+        }
       }
 
       if (
@@ -4839,6 +4979,13 @@ export function issueRoutes(
       }
     }
 
+    const controlTowerPatch =
+      actor.actorType === "agent" ? parseControlTowerIssuePatch(req.body.body) : null;
+    if (controlTowerPatch && isAgentTerminalDeliveryRegression(currentIssue, controlTowerPatch)) {
+      respondTerminalDeliveryRegression(res);
+      return;
+    }
+
     const comment = await svc.addComment(id, req.body.body, {
       agentId: actor.agentId ?? undefined,
       userId: actor.actorType === "user" ? actor.actorId : undefined,
@@ -4849,8 +4996,6 @@ export function issueRoutes(
       metadata: req.body.metadata ?? null,
     });
     await issueReferencesSvc.syncComment(comment.id);
-    const controlTowerPatch =
-      actor.actorType === "agent" ? parseControlTowerIssuePatch(comment.body) : null;
     if (controlTowerPatch) {
       const updatedIssue = await svc.update(currentIssue.id, {
         ...controlTowerPatch,
