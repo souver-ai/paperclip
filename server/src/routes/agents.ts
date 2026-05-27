@@ -49,6 +49,7 @@ import {
   workspaceOperationService,
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { isInstructionsPathWithinRoots } from "./instructions-path-boundary.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -1056,11 +1057,33 @@ export function agentRoutes(
     }
   }
 
-  function resolveInstructionsFilePath(candidatePath: string, adapterConfig: Record<string, unknown>) {
+  function resolveInstructionsFilePath(
+    candidatePath: string,
+    adapterConfig: Record<string, unknown>,
+    opts: { allowAbsoluteOutsideWorkspace?: boolean } = {},
+  ) {
+    // Board admins may set explicit external absolute paths; non-board callers
+    // (agent / ancestor-manager) must stay within the agent workspace so they
+    // cannot point instructions at host-sensitive files (SOU-1015).
+    const allowAbsoluteOutsideWorkspace = opts.allowAbsoluteOutsideWorkspace ?? true;
     const trimmed = candidatePath.trim();
-    if (path.isAbsolute(trimmed)) return trimmed;
-
     const cwd = asNonEmptyString(adapterConfig.cwd);
+
+    if (path.isAbsolute(trimmed)) {
+      if (allowAbsoluteOutsideWorkspace) return trimmed;
+      if (!cwd || !path.isAbsolute(cwd)) {
+        throw forbidden(
+          "Non-board callers must set adapterConfig.cwd to an absolute workspace before using an absolute instructions path",
+        );
+      }
+      if (!isInstructionsPathWithinRoots(trimmed, [cwd])) {
+        throw forbidden(
+          "Instructions path must stay within the agent workspace (adapterConfig.cwd) for non-board callers",
+        );
+      }
+      return trimmed;
+    }
+
     if (!cwd) {
       throw unprocessable(
         "Relative instructions path requires adapterConfig.cwd to be set to an absolute path",
@@ -1069,7 +1092,12 @@ export function agentRoutes(
     if (!path.isAbsolute(cwd)) {
       throw unprocessable("adapterConfig.cwd must be an absolute path to resolve relative instructions path");
     }
-    return path.resolve(cwd, trimmed);
+    const resolved = path.resolve(cwd, trimmed);
+    // A relative path can still escape the workspace via `..`; block that for non-board callers.
+    if (!allowAbsoluteOutsideWorkspace && !isInstructionsPathWithinRoots(resolved, [cwd])) {
+      throw forbidden("Instructions path must stay within the agent workspace (adapterConfig.cwd)");
+    }
+    return resolved;
   }
 
   async function materializeDefaultInstructionsBundleForNewAgent<T extends {
@@ -2346,7 +2374,9 @@ export function agentRoutes(
     if (req.body.path === null) {
       delete nextAdapterConfig[adapterConfigKey];
     } else {
-      nextAdapterConfig[adapterConfigKey] = resolveInstructionsFilePath(req.body.path, existingAdapterConfig);
+      nextAdapterConfig[adapterConfigKey] = resolveInstructionsFilePath(req.body.path, existingAdapterConfig, {
+        allowAbsoluteOutsideWorkspace: req.actor.type === "board",
+      });
     }
 
     const syncedAdapterConfig = syncInstructionsBundleConfigFromFilePath(existing, nextAdapterConfig);
