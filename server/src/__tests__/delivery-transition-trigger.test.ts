@@ -117,11 +117,15 @@ describe("delivery transition trigger", () => {
         reason: "delivery_merge_ready",
         payload: {
           issueId: "issue-1",
+          deliveryTransitionWake: true,
+          forceImmediateIssueWake: true,
           fromDeliveryState: "pr_ready",
           toDeliveryState: "merge_ready",
         },
         contextSnapshot: {
           taskId: "issue-1",
+          deliveryTransitionWake: true,
+          forceImmediateIssueWake: true,
           wakeReason: "delivery_merge_ready",
         },
       },

@@ -130,6 +130,8 @@ export function buildDeliveryTransitionWakeup(input: {
       payload: {
         issueId: input.issue.id,
         mutation: "delivery_state_transition",
+        deliveryTransitionWake: true,
+        forceImmediateIssueWake: true,
         fromDeliveryState: input.route.fromState,
         toDeliveryState: input.route.toState,
         targetAgentName: input.route.targetAgentName,
@@ -141,6 +143,8 @@ export function buildDeliveryTransitionWakeup(input: {
         issueId: input.issue.id,
         taskId: input.issue.id,
         source: "issue.delivery_state_transition",
+        deliveryTransitionWake: true,
+        forceImmediateIssueWake: true,
         wakeReason: input.route.wakeReason,
         fromDeliveryState: input.route.fromState,
         toDeliveryState: input.route.toState,

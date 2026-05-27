@@ -1594,6 +1594,7 @@ export function shouldResetTaskSessionForWake(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
   if (contextSnapshot?.forceFreshSession === true) return true;
+  if (isDeliveryTransitionWake(contextSnapshot)) return true;
 
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
   if (
@@ -1625,6 +1626,21 @@ function allowsIssueInteractionWake(
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
   if (!wakeReason || !ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS.has(wakeReason)) return false;
   return Boolean(deriveCommentId(contextSnapshot, null));
+}
+
+function isDeliveryTransitionWake(
+  contextSnapshot: Record<string, unknown> | null | undefined,
+) {
+  if (contextSnapshot?.deliveryTransitionWake !== true) return false;
+  if (readNonEmptyString(contextSnapshot?.source) !== "issue.delivery_state_transition") return false;
+  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
+  return Boolean(wakeReason?.startsWith("delivery_"));
+}
+
+function shouldForceImmediateIssueWake(
+  contextSnapshot: Record<string, unknown> | null | undefined,
+) {
+  return contextSnapshot?.forceImmediateIssueWake === true && isDeliveryTransitionWake(contextSnapshot);
 }
 
 async function listUnresolvedBlockerSummaries(
@@ -8840,7 +8856,82 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           activeExecutionRun = null;
         }
 
-        if (activeExecutionRun && await cancelStaleScheduledRetry(activeExecutionRun)) {
+        const cancelScheduledRetryForImmediateWake = async (scheduledRun: typeof heartbeatRuns.$inferSelect) => {
+          if (scheduledRun.status !== "scheduled_retry" || !shouldForceImmediateIssueWake(enrichedContextSnapshot)) {
+            return false;
+          }
+
+          const now = new Date();
+          const reason = "Cancelled because a delivery transition requested immediate issue execution";
+          const cancelled = await tx
+            .update(heartbeatRuns)
+            .set({
+              status: "cancelled",
+              finishedAt: now,
+              error: reason,
+              errorCode: "delivery_transition_immediate_wake",
+              updatedAt: now,
+            })
+            .where(and(eq(heartbeatRuns.id, scheduledRun.id), eq(heartbeatRuns.status, "scheduled_retry")))
+            .returning()
+            .then((rows) => rows[0] ?? null);
+
+          if (!cancelled) return false;
+
+          if (scheduledRun.wakeupRequestId) {
+            await tx
+              .update(agentWakeupRequests)
+              .set({
+                status: "cancelled",
+                finishedAt: now,
+                error: reason,
+                updatedAt: now,
+              })
+              .where(eq(agentWakeupRequests.id, scheduledRun.wakeupRequestId));
+          }
+
+          if (issue.executionRunId === scheduledRun.id) {
+            await tx
+              .update(issues)
+              .set({
+                executionRunId: null,
+                executionAgentNameKey: null,
+                executionLockedAt: null,
+                updatedAt: now,
+              })
+              .where(and(eq(issues.id, issue.id), eq(issues.executionRunId, scheduledRun.id)));
+          }
+
+          const [eventSeq] = await tx
+            .select({ maxSeq: sql<number | null>`max(${heartbeatRunEvents.seq})` })
+            .from(heartbeatRunEvents)
+            .where(eq(heartbeatRunEvents.runId, cancelled.id));
+
+          await tx.insert(heartbeatRunEvents).values({
+            companyId: cancelled.companyId,
+            runId: cancelled.id,
+            agentId: cancelled.agentId,
+            seq: Number(eventSeq?.maxSeq ?? 0) + 1,
+            eventType: "lifecycle",
+            stream: "system",
+            level: "warn",
+            message: "Scheduled retry cancelled because delivery transition requested immediate execution",
+            payload: {
+              issueId: issue.id,
+              wakeReason: readNonEmptyString(enrichedContextSnapshot.wakeReason),
+              fromDeliveryState: readNonEmptyString(enrichedContextSnapshot.fromDeliveryState),
+              toDeliveryState: readNonEmptyString(enrichedContextSnapshot.toDeliveryState),
+            },
+          });
+
+          return true;
+        };
+
+        if (
+          activeExecutionRun &&
+          (await cancelStaleScheduledRetry(activeExecutionRun) ||
+            await cancelScheduledRetryForImmediateWake(activeExecutionRun))
+        ) {
           activeExecutionRun = null;
         }
 
@@ -8875,7 +8966,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             .then((rows) => rows[0] ?? null);
 
           if (legacyRun) {
-            if (await cancelStaleScheduledRetry(legacyRun)) {
+            if (
+              await cancelStaleScheduledRetry(legacyRun) ||
+              await cancelScheduledRetryForImmediateWake(legacyRun)
+            ) {
               activeExecutionRun = null;
             } else {
               activeExecutionRun = legacyRun;
