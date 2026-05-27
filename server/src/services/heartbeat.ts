@@ -81,6 +81,11 @@ import {
 } from "./run-liveness.js";
 import { logActivity, publishPluginDomainEvent, type LogActivityInput } from "./activity-log.js";
 import {
+  buildDeliveryTransitionWakeup,
+  isDeliveryTransitionReconcileCandidate,
+  resolveDeliveryTransitionRoute,
+} from "./delivery-transition-trigger.js";
+import {
   buildWorkspaceReadyComment,
   cleanupExecutionWorkspaceArtifacts,
   ensureRuntimeServicesForRun,
@@ -185,6 +190,8 @@ const MAX_RUN_EVENT_PAYLOAD_DEPTH = 6;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MIN = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 50;
+const DELIVERY_TRANSITION_RECONCILE_LIMIT = 3;
+const DELIVERY_TRANSITION_RECONCILE_BUCKET_MS = 10 * 60 * 1000;
 const LIVENESS_BOOKKEEPING_ACTIVITY_ACTIONS = [
   "environment.lease_acquired",
   "environment.lease_released",
@@ -9837,6 +9844,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       let checked = 0;
       let enqueued = 0;
       let skipped = 0;
+      let deliveryReconcileChecked = 0;
+      let deliveryReconcileEnqueued = 0;
+      let deliveryReconcileSkipped = 0;
 
       for (const agent of allAgents) {
         if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") continue;
@@ -9864,12 +9874,97 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         else skipped += 1;
       }
 
+      const deliveryCandidates = await db
+        .select()
+        .from(issues)
+        .where(and(
+          inArray(issues.deliveryState, ["pr_ready", "changes_requested", "merge_ready", "merged", "target_verifying"]),
+          inArray(issues.status, ["todo", "in_progress", "blocked", "in_review"]),
+          isNull(issues.executionRunId),
+        ))
+        .orderBy(asc(issues.updatedAt))
+        .limit(DELIVERY_TRANSITION_RECONCILE_LIMIT);
+      const reconcileBucket = Math.floor(now.getTime() / DELIVERY_TRANSITION_RECONCILE_BUCKET_MS);
+      for (const issue of deliveryCandidates) {
+        deliveryReconcileChecked += 1;
+        if (!isDeliveryTransitionReconcileCandidate(issue)) {
+          deliveryReconcileSkipped += 1;
+          continue;
+        }
+
+        const route = resolveDeliveryTransitionRoute({
+          previousIssue: issue,
+          nextDeliveryState: issue.deliveryState,
+          nextBlockerType: issue.blockerType,
+          nextBenjaminRequired: issue.benjaminRequired,
+          agents: allAgents,
+          allowCurrentState: true,
+        });
+        if (!route) {
+          deliveryReconcileSkipped += 1;
+          continue;
+        }
+
+        if (route.targetAgentId && issue.assigneeAgentId !== route.targetAgentId) {
+          await db
+            .update(issues)
+            .set({
+              assigneeAgentId: route.targetAgentId,
+              assigneeUserId: null,
+              updatedAt: now,
+            })
+            .where(and(eq(issues.id, issue.id), eq(issues.companyId, issue.companyId)));
+          issue.assigneeAgentId = route.targetAgentId;
+          issue.assigneeUserId = null;
+        }
+
+        await logActivity(db, {
+          companyId: issue.companyId,
+          actorType: "system",
+          actorId: "delivery_transition_reconciler",
+          agentId: null,
+          runId: null,
+          action: route.targetAgentId
+            ? "issue.delivery_transition_routed"
+            : "issue.delivery_transition_route_missing",
+          entityType: "issue",
+          entityId: issue.id,
+          details: {
+            identifier: issue.identifier,
+            fromDeliveryState: route.fromState,
+            toDeliveryState: route.toState,
+            targetAgentName: route.targetAgentName,
+            targetAgentId: route.targetAgentId,
+            wakeReason: route.wakeReason,
+            source: "delivery_transition_reconciler",
+          },
+        });
+
+        const deliveryWakeup = buildDeliveryTransitionWakeup({
+          issue,
+          route,
+          requestedByActorType: "system",
+          requestedByActorId: "delivery_transition_reconciler",
+        });
+        if (!deliveryWakeup) {
+          deliveryReconcileSkipped += 1;
+          continue;
+        }
+
+        const run = await enqueueWakeup(deliveryWakeup.agentId, {
+          ...deliveryWakeup.wakeup,
+          idempotencyKey: `delivery-transition-reconcile:${issue.id}:${route.toState}:${reconcileBucket}`,
+        });
+        if (run) deliveryReconcileEnqueued += 1;
+        else deliveryReconcileSkipped += 1;
+      }
+
       const issueMonitors = await tickDueIssueMonitors(now);
 
       return {
-        checked: checked + issueMonitors.checked,
-        enqueued: enqueued + issueMonitors.triggered,
-        skipped: skipped + issueMonitors.skipped,
+        checked: checked + issueMonitors.checked + deliveryReconcileChecked,
+        enqueued: enqueued + issueMonitors.triggered + deliveryReconcileEnqueued,
+        skipped: skipped + issueMonitors.skipped + deliveryReconcileSkipped,
       };
     },
 

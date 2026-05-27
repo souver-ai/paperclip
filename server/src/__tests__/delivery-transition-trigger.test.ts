@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDeliveryTransitionWakeup,
   findDeliveryTransitionAgent,
+  isDeliveryTransitionReconcileCandidate,
   resolveDeliveryTransitionRoute,
 } from "../services/delivery-transition-trigger.js";
 
@@ -92,6 +93,30 @@ describe("delivery transition trigger", () => {
     });
 
     expect(route).toBeNull();
+  });
+
+  it("marks stale machine-actionable delivery states as reconcile candidates", () => {
+    expect(isDeliveryTransitionReconcileCandidate({
+      ...baseIssue,
+      status: "blocked",
+      deliveryState: "merge_ready",
+      assigneeAgentId: "agent-dev",
+    })).toBe(true);
+  });
+
+  it("does not reconcile human protected delivery gates", () => {
+    expect(isDeliveryTransitionReconcileCandidate({
+      ...baseIssue,
+      status: "blocked",
+      deliveryState: "merge_ready",
+      blockerType: "approval_benjamin",
+      benjaminRequired: true,
+    })).toBe(false);
+    expect(isDeliveryTransitionReconcileCandidate({
+      ...baseIssue,
+      status: "blocked",
+      deliveryState: "parked_hold",
+    })).toBe(false);
   });
 
   it("builds a scoped wakeup payload for the routed agent", () => {

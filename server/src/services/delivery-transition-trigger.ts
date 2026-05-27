@@ -63,6 +63,7 @@ const DELIVERY_TRANSITION_TARGETS: Record<string, { agentName: string; wakeReaso
   },
 };
 
+const MACHINE_ACTIONABLE_STATUSES = new Set(["todo", "in_progress", "blocked", "in_review"]);
 const HUMAN_GATE_STATES = new Set([
   "merged_verified",
   "live_verified",
@@ -72,6 +73,18 @@ const HUMAN_GATE_STATES = new Set([
 
 function normalizeAgentName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function isDeliveryTransitionActionableState(value: string | null | undefined) {
+  return Boolean(value && DELIVERY_TRANSITION_TARGETS[value]);
+}
+
+export function isDeliveryTransitionReconcileCandidate(issue: DeliveryTransitionIssue) {
+  if (!MACHINE_ACTIONABLE_STATUSES.has(issue.status)) return false;
+  if (!isDeliveryTransitionActionableState(issue.deliveryState)) return false;
+  if (HUMAN_GATE_STATES.has(issue.deliveryState)) return false;
+  if (issue.benjaminRequired === true || issue.blockerType === "approval_benjamin") return false;
+  return true;
 }
 
 export function findDeliveryTransitionAgent(
@@ -96,6 +109,12 @@ export function resolveDeliveryTransitionRoute(input: {
   const fromState = input.previousIssue.deliveryState;
   const toState = input.nextDeliveryState;
   if (!toState || (!input.allowCurrentState && fromState === toState)) return null;
+  if (!isDeliveryTransitionReconcileCandidate({
+    ...input.previousIssue,
+    deliveryState: toState,
+    blockerType: input.nextBlockerType ?? input.previousIssue.blockerType,
+    benjaminRequired: input.nextBenjaminRequired ?? input.previousIssue.benjaminRequired,
+  })) return null;
   if (HUMAN_GATE_STATES.has(toState)) return null;
   if (input.nextBenjaminRequired === true || input.nextBlockerType === "approval_benjamin") return null;
 
