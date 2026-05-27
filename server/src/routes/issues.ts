@@ -3898,12 +3898,25 @@ export function issueRoutes(
     void (async () => {
       type WakeupRequest = NonNullable<Parameters<typeof heartbeat.wakeup>[1]>;
       const wakeups = new Map<string, { agentId: string; wakeup: WakeupRequest }>();
+      const isDeliveryTransitionWakeup = (wakeup: WakeupRequest) => {
+        const context =
+          wakeup.contextSnapshot && typeof wakeup.contextSnapshot === "object"
+            ? wakeup.contextSnapshot
+            : {};
+        const payload = wakeup.payload && typeof wakeup.payload === "object" ? wakeup.payload : {};
+        return context.deliveryTransitionWake === true || payload.deliveryTransitionWake === true;
+      };
       const addWakeup = (agentId: string, wakeup: WakeupRequest) => {
         const wakeIssueId =
           wakeup.payload && typeof wakeup.payload === "object" && typeof wakeup.payload.issueId === "string"
             ? wakeup.payload.issueId
             : issue.id;
-        wakeups.set(`${agentId}:${wakeIssueId}`, { agentId, wakeup });
+        const key = `${agentId}:${wakeIssueId}`;
+        const existing = wakeups.get(key);
+        if (existing && isDeliveryTransitionWakeup(existing.wakeup) && !isDeliveryTransitionWakeup(wakeup)) {
+          return;
+        }
+        wakeups.set(key, { agentId, wakeup });
       };
 
       if (executionStageWakeup) {
