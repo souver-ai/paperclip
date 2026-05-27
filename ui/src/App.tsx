@@ -7,6 +7,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { DashboardLive } from "./pages/DashboardLive";
 import { ControlTower } from "./pages/ControlTower";
 import { QuotaGovernor } from "./pages/QuotaGovernor";
+import { Autonomy } from "./pages/Autonomy";
 import { Features } from "./pages/Features";
 import { Harness } from "./pages/Harness";
 import { Tests } from "./pages/Tests";
@@ -71,6 +72,7 @@ function boardRoutes() {
       <Route path="dashboard/live" element={<DashboardLive />} />
       <Route path="control-tower" element={<ControlTower />} />
       <Route path="quota-governor" element={<QuotaGovernor />} />
+      <Route path="autonomy" element={<Autonomy />} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />

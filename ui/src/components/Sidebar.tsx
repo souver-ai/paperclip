@@ -15,6 +15,7 @@ import {
   Settings,
   RadioTower,
   Gauge,
+  Activity,
   ListChecks,
   FlaskConical,
 } from "lucide-react";
@@ -88,6 +89,7 @@ export function Sidebar() {
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
           <SidebarNavItem to="/control-tower" label="Control Tower" icon={RadioTower} />
           <SidebarNavItem to="/quota-governor" label="Quota Governor" icon={Gauge} />
+          <SidebarNavItem to="/autonomy" label="Autonomy 24/7" icon={Activity} />
           <SidebarNavItem
             to="/inbox"
             label="Inbox"
