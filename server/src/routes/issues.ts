@@ -127,6 +127,7 @@ const updateIssueWithDeliveryProofsRouteSchema = updateIssueRouteSchema.extend({
   deliveryProofs: z.array(createIssueDeliveryProofSchema).max(20).optional(),
 });
 const DONE_DELIVERY_STATES = new Set(["merged_verified", "live_verified", "waived_by_benjamin"]);
+const REOPENED_STATUS_VALUES = new Set(["backlog", "todo", "in_progress", "in_review", "blocked"]);
 const DELIVERY_STATE_VALUES = new Set<string>(DELIVERY_STATES);
 const BLOCKER_TYPE_VALUES = new Set<string>(BLOCKER_TYPES);
 const CONTROL_TOWER_UPDATE_KEYS = new Set([
@@ -769,6 +770,25 @@ function parseControlTowerIssuePatch(body: string) {
   }
 
   return Object.keys(patch).length > 0 ? patch : null;
+}
+
+function isAgentTerminalDeliveryRegression(
+  existing: { status: string; deliveryState: string },
+  patch: Record<string, unknown>,
+) {
+  if (existing.status !== "done" || !DONE_DELIVERY_STATES.has(existing.deliveryState)) return false;
+  const requestedStatus = typeof patch.status === "string" ? patch.status : existing.status;
+  const requestedDeliveryState =
+    typeof patch.deliveryState === "string" ? patch.deliveryState : existing.deliveryState;
+  return REOPENED_STATUS_VALUES.has(requestedStatus) || !DONE_DELIVERY_STATES.has(requestedDeliveryState);
+}
+
+function respondTerminalDeliveryRegression(res: Response) {
+  res.status(409).json({
+    error: "Terminal delivery state cannot be regressed by an agent update",
+    code: "terminal_delivery_state_regression",
+    requiredActor: "board",
+  });
 }
 
 function shouldImplicitlyMoveCommentedIssueToTodo(input: {
@@ -3231,6 +3251,13 @@ export function issueRoutes(
         actor.actorType,
       );
     }
+    if (
+      req.actor.type === "agent" &&
+      isAgentTerminalDeliveryRegression(existing, updateFields)
+    ) {
+      respondTerminalDeliveryRegression(res);
+      return;
+    }
     const previousExecutionPolicy = normalizeIssueExecutionPolicy(existing.executionPolicy ?? null);
     const nextExecutionPolicy =
       updateFields.executionPolicy !== undefined
@@ -4950,6 +4977,13 @@ export function issueRoutes(
       }
     }
 
+    const controlTowerPatch =
+      actor.actorType === "agent" ? parseControlTowerIssuePatch(req.body.body) : null;
+    if (controlTowerPatch && isAgentTerminalDeliveryRegression(currentIssue, controlTowerPatch)) {
+      respondTerminalDeliveryRegression(res);
+      return;
+    }
+
     const comment = await svc.addComment(id, req.body.body, {
       agentId: actor.agentId ?? undefined,
       userId: actor.actorType === "user" ? actor.actorId : undefined,
@@ -4960,8 +4994,6 @@ export function issueRoutes(
       metadata: req.body.metadata ?? null,
     });
     await issueReferencesSvc.syncComment(comment.id);
-    const controlTowerPatch =
-      actor.actorType === "agent" ? parseControlTowerIssuePatch(comment.body) : null;
     if (controlTowerPatch) {
       const updatedIssue = await svc.update(currentIssue.id, {
         ...controlTowerPatch,
