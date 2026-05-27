@@ -199,15 +199,38 @@ describe("buildFeatureBackfillCandidates", () => {
     expect(candidates).toHaveLength(0);
   });
 
-  it("skips closed issues and issues that already have a native feature", () => {
+  it("backfills terminal issues so the registry is exhaustive (delivered / abandoned)", () => {
     const candidates = buildFeatureBackfillCandidates(
       [
         issue({
           id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
           category: "feature",
           status: "done",
+          deliveryState: "merged_verified",
           identifier: "SOU-42",
+          updatedAt: new Date("2026-05-26T03:00:00.000Z"),
         }),
+        issue({
+          id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+          category: "feature",
+          status: "cancelled",
+          deliveryState: "active_branch",
+          identifier: "SOU-50",
+          updatedAt: new Date("2026-05-26T02:00:00.000Z"),
+        }),
+      ],
+      [],
+    );
+
+    expect(candidates).toEqual([
+      expect.objectContaining({ featureId: "SOU-42", intakeStatus: "delivered", deliveryState: "merged_verified" }),
+      expect.objectContaining({ featureId: "SOU-50", intakeStatus: "rejected", deliveryState: "active_branch" }),
+    ]);
+  });
+
+  it("dedups issues that already have a native feature", () => {
+    const candidates = buildFeatureBackfillCandidates(
+      [
         issue({
           id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
           category: "feature",

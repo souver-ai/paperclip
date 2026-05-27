@@ -218,6 +218,44 @@ export const FEATURE_INTAKE_STATUSES = [
 ] as const;
 export type FeatureIntakeStatus = (typeof FEATURE_INTAKE_STATUSES)[number];
 
+// Delivery states that mean the work actually reached main (merged / verified / waived by Benjamin).
+// A "delivered" intake whose deliveryState is NOT in this set is a done-but-unmerged feature
+// (the classic false-done: an issue closed while its branch never landed).
+export const FEATURE_DELIVERED_DELIVERY_STATES = [
+  "merged",
+  "target_verifying",
+  "merged_verified",
+  "live_verified",
+  "waived_by_benjamin",
+] as const;
+
+// Coarse buckets surfaced in the Features view. Derived from (intakeStatus, deliveryState)
+// so the table is exhaustive and reflects reality, not just the in-flight subset.
+export const FEATURE_BUCKETS = [
+  "delivered",
+  "delivered_unmerged",
+  "in_delivery",
+  "queued",
+  "parked",
+  "abandoned",
+] as const;
+export type FeatureBucket = (typeof FEATURE_BUCKETS)[number];
+
+export function featureBucket(
+  intakeStatus: FeatureIntakeStatus | string,
+  deliveryState: DeliveryState | string,
+): FeatureBucket {
+  if (intakeStatus === "rejected") return "abandoned";
+  if (intakeStatus === "parked") return "parked";
+  if (intakeStatus === "delivered") {
+    return (FEATURE_DELIVERED_DELIVERY_STATES as readonly string[]).includes(deliveryState)
+      ? "delivered"
+      : "delivered_unmerged";
+  }
+  if (intakeStatus === "in_delivery" || intakeStatus === "selected") return "in_delivery";
+  return "queued";
+}
+
 export const FEATURE_RISK_LEVELS = ["low", "medium", "high"] as const;
 export type FeatureRiskLevel = (typeof FEATURE_RISK_LEVELS)[number];
 

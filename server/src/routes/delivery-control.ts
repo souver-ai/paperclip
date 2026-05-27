@@ -74,7 +74,7 @@ export function deliveryControlRoutes(db: Db) {
       action: "delivery.features_backfilled",
       entityType: "feature",
       entityId: companyId,
-      details: { created: result.created, skipped: result.skipped },
+      details: { created: result.created, updated: result.updated, skipped: result.skipped },
     });
     res.status(201).json(result);
   });

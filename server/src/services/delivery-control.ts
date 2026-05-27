@@ -399,6 +399,11 @@ function primarySurface(issue: IssueRow): string | null {
 }
 
 function featureStatusFromIssue(issue: IssueRow): CreateFeature["intakeStatus"] {
+  // Terminal issue states carry the ground truth. "done" maps to delivered regardless of merge
+  // state; the deliveryState (carried over below) lets the UI split truly-merged from
+  // done-but-unmerged. "cancelled" means the feature was abandoned.
+  if (issue.status === "done") return "delivered";
+  if (issue.status === "cancelled") return "rejected";
   if (issue.status === "in_progress" || issue.status === "in_review") return "in_delivery";
   if (issue.status === "blocked") return "selected";
   if (issue.status === "todo") return "queued";
@@ -412,7 +417,10 @@ function featureIdFromIssue(issue: IssueRow): string {
 }
 
 function isFeatureBackfillIssue(issue: IssueRow, agentsById: Map<string, AgentRow>) {
-  if (!isOpenIssueStatus(issue.status) || issue.hiddenAt != null) return false;
+  // Include terminal issues (done/cancelled) so the registry is exhaustive: delivered features and
+  // abandoned ones must show up too, not only the in-flight subset. The exclusion list below still
+  // keeps harness/security/process/routine noise out.
+  if (issue.hiddenAt != null) return false;
   if (issue.category === "feature") return true;
 
   const haystack = `${issue.title ?? ""}\n${issue.description ?? ""}`.toLowerCase();
@@ -666,14 +674,19 @@ export function deliveryControlService(db: Db) {
         .where(and(
           eq(issues.companyId, companyId),
           sql`${issues.hiddenAt} is null`,
-          sql`${issues.status} not in ('done', 'cancelled')`,
         )),
       db.select().from(features).where(eq(features.companyId, companyId)),
       db.select().from(agents).where(eq(agents.companyId, companyId)),
     ]);
+
+    // Reconcile existing feature rows against the current state of their root issue, so a feature
+    // whose issue has since been delivered/cancelled/advanced no longer shows a stale status.
+    const issuesById = new Map(issueRows.map((issue) => [issue.id, issue]));
+    const updated = await reconcileFeaturesFromIssues(existingFeatureRows, issuesById);
+
     const candidates = buildFeatureBackfillCandidates(issueRows, existingFeatureRows, agentRows);
     if (candidates.length === 0) {
-      return { created: 0, skipped: issueRows.length, features: [] };
+      return { created: 0, updated, skipped: issueRows.length, features: [] };
     }
 
     const created = await db
@@ -686,9 +699,40 @@ export function deliveryControlService(db: Db) {
 
     return {
       created: created.length,
+      updated,
       skipped: issueRows.length - created.length,
       features: created,
     };
+  }
+
+  async function reconcileFeaturesFromIssues(
+    existingFeatureRows: FeatureRow[],
+    issuesById: Map<string, IssueRow>,
+  ): Promise<number> {
+    let updated = 0;
+    for (const feature of existingFeatureRows) {
+      if (!feature.rootIssueId) continue;
+      const issue = issuesById.get(feature.rootIssueId);
+      if (!issue) continue;
+
+      const nextDeliveryState = issue.deliveryState;
+      let nextIntakeStatus = feature.intakeStatus;
+      // Only force the intake status toward a terminal verdict; leave in-flight curation
+      // (selected / queued / parked decisions made in the UI) untouched.
+      if (issue.status === "done") nextIntakeStatus = "delivered";
+      else if (issue.status === "cancelled") nextIntakeStatus = "rejected";
+
+      if (nextIntakeStatus === feature.intakeStatus && nextDeliveryState === feature.deliveryState) {
+        continue;
+      }
+
+      await db
+        .update(features)
+        .set({ intakeStatus: nextIntakeStatus, deliveryState: nextDeliveryState, updatedAt: new Date() })
+        .where(eq(features.id, feature.id));
+      updated += 1;
+    }
+    return updated;
   }
 
   async function updateFeature(id: string, input: UpdateFeature, changedBy: string | null = null) {

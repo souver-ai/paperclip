@@ -7,12 +7,11 @@ import {
   ClipboardCheck,
   DatabaseZap,
   Eye,
-  GitBranch,
   Link as LinkIcon,
   PlayCircle,
   type LucideIcon,
 } from "lucide-react";
-import type { Feature } from "@paperclipai/shared";
+import { featureBucket, FEATURE_BUCKETS, type Feature, type FeatureBucket } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { deliveryControlApi } from "../api/deliveryControl";
 import { EmptyState } from "../components/EmptyState";
@@ -31,9 +30,7 @@ import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime } from "../lib/utils";
 
-type Tone = "default" | "success" | "warning" | "danger";
-
-const ACTIVE_STATUSES = new Set(["selected", "in_delivery"]);
+type Tone = "default" | "success" | "warning" | "danger" | "info" | "caution";
 
 function formatLabel(value: string | null | undefined): string {
   if (!value) return "none";
@@ -42,11 +39,10 @@ function formatLabel(value: string | null | undefined): string {
 
 function toneFor(value: string | null | undefined): Tone {
   if (!value) return "default";
-  if (["delivered", "merged_verified", "live_verified"].includes(value)) return "success";
-  if (["blocked", "locked_cto", "blocked_needs_benjamin", "rejected"].includes(value)) return "danger";
-  if (["queued", "selected", "in_delivery", "queued_repo_gate", "in_review", "pm_framing"].includes(value)) {
-    return "warning";
-  }
+  if (["delivered", "merged", "target_verifying", "merged_verified", "live_verified"].includes(value)) return "success";
+  if (["blocked", "locked_cto", "blocked_needs_benjamin", "rejected", "changes_requested"].includes(value)) return "danger";
+  if (["selected", "in_delivery", "active_branch", "pr_ready", "in_review", "merge_ready"].includes(value)) return "info";
+  if (["queued", "ready_for_priority", "queued_repo_gate", "pm_framing", "proposed"].includes(value)) return "warning";
   return "default";
 }
 
@@ -56,11 +52,39 @@ function toneClasses(tone: Tone): string {
       return "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300";
     case "warning":
       return "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300";
+    case "caution":
+      return "border-orange-500/40 bg-orange-500/5 text-orange-700 dark:text-orange-300";
+    case "info":
+      return "border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300";
     case "danger":
       return "border-red-500/40 bg-red-500/5 text-red-700 dark:text-red-300";
     default:
       return "border-border bg-muted/40 text-muted-foreground";
   }
+}
+
+// Coarse delivery buckets shown in the table + filter bar. Each bucket has a distinct tone so
+// "in delivery" (blue) is never confused with "queued" (amber), and done-but-unmerged stands out.
+const BUCKET_TONE: Record<FeatureBucket, Tone> = {
+  delivered: "success",
+  delivered_unmerged: "caution",
+  in_delivery: "info",
+  queued: "warning",
+  parked: "default",
+  abandoned: "danger",
+};
+
+const BUCKET_LABEL: Record<FeatureBucket, string> = {
+  delivered: "Delivered",
+  delivered_unmerged: "Done · unmerged",
+  in_delivery: "In delivery",
+  queued: "Queued",
+  parked: "Parked",
+  abandoned: "Abandoned",
+};
+
+function bucketOf(feature: Feature): FeatureBucket {
+  return featureBucket(feature.intakeStatus, feature.deliveryState);
 }
 
 function Pill({ children, tone = "default" }: { children: ReactNode; tone?: Tone }) {
@@ -71,27 +95,32 @@ function Pill({ children, tone = "default" }: { children: ReactNode; tone?: Tone
   );
 }
 
-function Metric({
+function FilterChip({
   label,
-  value,
-  icon: Icon,
+  count,
   tone = "default",
+  active,
+  onClick,
 }: {
   label: string;
-  value: number;
-  icon: LucideIcon;
+  count: number;
   tone?: Tone;
+  active: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div className="border border-border bg-card px-4 py-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="h-4 w-4 shrink-0" />
-        <span>{label}</span>
-      </div>
-      <div className={cn("mt-2 text-2xl font-semibold tabular-nums", tone === "success" && "text-emerald-600 dark:text-emerald-300", tone === "warning" && "text-amber-600 dark:text-amber-300")}>
-        {value}
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition",
+        active ? toneClasses(tone) : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      <span>{label}</span>
+      <span className="tabular-nums text-xs opacity-80">{count}</span>
+    </button>
   );
 }
 
@@ -164,7 +193,7 @@ function FeatureDrawer({
         <SheetHeader className="border-b border-border pr-10">
           <div className="flex flex-wrap items-center gap-2">
             {feature ? <span className="font-mono text-xs text-primary">{feature.featureId}</span> : null}
-            {feature ? <Pill tone={toneFor(feature.intakeStatus)}>{formatLabel(feature.intakeStatus)}</Pill> : null}
+            {feature ? <Pill tone={BUCKET_TONE[bucketOf(feature)]}>{BUCKET_LABEL[bucketOf(feature)]}</Pill> : null}
             {feature ? <Pill tone={toneFor(feature.deliveryState)}>{formatLabel(feature.deliveryState)}</Pill> : null}
           </div>
           <SheetTitle>{feature?.title ?? "Feature"}</SheetTitle>
@@ -216,6 +245,7 @@ export function Features() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
+  const [bucketFilter, setBucketFilter] = useState<FeatureBucket | "all">("all");
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Work", href: "/issues" }, { label: "Features" }]);
@@ -274,11 +304,17 @@ export function Features() {
   });
 
   const sortedFeatures = useMemo(() => sortFeatures(featuresQuery.data ?? []), [featuresQuery.data]);
+  const bucketCounts = useMemo(() => {
+    const counts = Object.fromEntries(FEATURE_BUCKETS.map((bucket) => [bucket, 0])) as Record<FeatureBucket, number>;
+    for (const feature of sortedFeatures) counts[bucketOf(feature)] += 1;
+    return counts;
+  }, [sortedFeatures]);
+  const visibleFeatures = useMemo(
+    () => (bucketFilter === "all" ? sortedFeatures : sortedFeatures.filter((feature) => bucketOf(feature) === bucketFilter)),
+    [sortedFeatures, bucketFilter],
+  );
   const selectedFeature = selectedFeatureId ? sortedFeatures.find((feature) => feature.id === selectedFeatureId) ?? null : null;
-  const activeCount = sortedFeatures.filter((feature) => ACTIVE_STATUSES.has(feature.intakeStatus)).length;
-  const queuedCount = sortedFeatures.filter((feature) => ["ready_for_priority", "queued"].includes(feature.intakeStatus)).length;
-  const parkedCount = sortedFeatures.filter((feature) => feature.intakeStatus === "parked").length;
-  const deliveredCount = sortedFeatures.filter((feature) => feature.intakeStatus === "delivered").length;
+  const reorderEnabled = bucketFilter === "all";
 
   if (!selectedCompanyId) {
     return companies.length === 0
@@ -326,11 +362,23 @@ export function Features() {
         </div>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="In Progress / Selected" value={activeCount} icon={PlayCircle} tone={activeCount > 0 ? "warning" : "default"} />
-        <Metric label="Queued" value={queuedCount} icon={ClipboardCheck} />
-        <Metric label="Parked" value={parkedCount} icon={GitBranch} />
-        <Metric label="Delivered" value={deliveredCount} icon={ClipboardCheck} tone={deliveredCount > 0 ? "success" : "default"} />
+      <div className="flex flex-wrap gap-2">
+        <FilterChip
+          label="All"
+          count={sortedFeatures.length}
+          active={bucketFilter === "all"}
+          onClick={() => setBucketFilter("all")}
+        />
+        {FEATURE_BUCKETS.map((bucket) => (
+          <FilterChip
+            key={bucket}
+            label={BUCKET_LABEL[bucket]}
+            count={bucketCounts[bucket]}
+            tone={BUCKET_TONE[bucket]}
+            active={bucketFilter === bucket}
+            onClick={() => setBucketFilter((current) => (current === bucket ? "all" : bucket))}
+          />
+        ))}
       </div>
 
       {sortedFeatures.length === 0 ? (
@@ -341,6 +389,10 @@ export function Features() {
             action="Backfill from issues"
             onAction={() => backfillMutation.mutate()}
           />
+        </div>
+      ) : visibleFeatures.length === 0 ? (
+        <div className="border border-dashed border-border bg-card">
+          <EmptyState icon={ClipboardCheck} message={`No features in "${BUCKET_LABEL[bucketFilter as FeatureBucket]}".`} />
         </div>
       ) : (
         <div className="overflow-x-auto border border-border bg-card">
@@ -358,7 +410,7 @@ export function Features() {
               </tr>
             </thead>
             <tbody>
-              {sortedFeatures.map((feature, index) => (
+              {visibleFeatures.map((feature, index) => (
                 <tr key={feature.id} className="border-b border-border/70 last:border-0">
                   <td className="px-3 py-3 align-top font-mono text-xs text-muted-foreground">
                     {feature.priorityRank !== null ? `#${feature.priorityRank}` : "none"}
@@ -380,7 +432,7 @@ export function Features() {
                     </div>
                   </td>
                   <td className="px-3 py-3 align-top">
-                    <Pill tone={toneFor(feature.intakeStatus)}>{formatLabel(feature.intakeStatus)}</Pill>
+                    <Pill tone={BUCKET_TONE[bucketOf(feature)]}>{BUCKET_LABEL[bucketOf(feature)]}</Pill>
                   </td>
                   <td className="px-3 py-3 align-top">
                     <Pill tone={toneFor(feature.deliveryState)}>{formatLabel(feature.deliveryState)}</Pill>
@@ -405,8 +457,8 @@ export function Features() {
                   <td className="px-3 py-3 align-top">
                     <div className="flex justify-end gap-1">
                       <IconButton title="Open feature detail" icon={Eye} onClick={() => setSelectedFeatureId(feature.id)} />
-                      <IconButton title="Move feature up" icon={ArrowUp} disabled={index === 0 || moveMutation.isPending} onClick={() => moveFeature(index, -1)} />
-                      <IconButton title="Move feature down" icon={ArrowDown} disabled={index === sortedFeatures.length - 1 || moveMutation.isPending} onClick={() => moveFeature(index, 1)} />
+                      <IconButton title={reorderEnabled ? "Move feature up" : "Clear filter to reorder"} icon={ArrowUp} disabled={!reorderEnabled || index === 0 || moveMutation.isPending} onClick={() => moveFeature(index, -1)} />
+                      <IconButton title={reorderEnabled ? "Move feature down" : "Clear filter to reorder"} icon={ArrowDown} disabled={!reorderEnabled || index === visibleFeatures.length - 1 || moveMutation.isPending} onClick={() => moveFeature(index, 1)} />
                     </div>
                   </td>
                 </tr>
