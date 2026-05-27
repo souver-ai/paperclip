@@ -3304,6 +3304,8 @@ export function issueRoutes(
       typeof updateFields.deliveryState === "string" ? updateFields.deliveryState : existing.deliveryState;
     const deliveryStateChanged =
       typeof updateFields.deliveryState === "string" && updateFields.deliveryState !== existing.deliveryState;
+    const blockerTypeChanged =
+      updateFields.blockerType !== undefined && updateFields.blockerType !== existing.blockerType;
     const explicitAssigneePatch =
       normalizedAssigneeAgentId !== undefined ||
       updateFields.assigneeAgentId !== undefined ||
@@ -3313,7 +3315,7 @@ export function issueRoutes(
       !explicitAssigneePatch &&
       typeof requestedDeliveryState === "string" &&
       !["backlog", "done", "cancelled"].includes(existing.status);
-    if (deliveryStateChanged || shouldReconcileDeliveryOwner) {
+    if (deliveryStateChanged || blockerTypeChanged || shouldReconcileDeliveryOwner) {
       let companyAgents: Awaited<ReturnType<typeof agentsSvc.list>> = [];
       try {
         companyAgents = await agentsSvc.list(existing.companyId);

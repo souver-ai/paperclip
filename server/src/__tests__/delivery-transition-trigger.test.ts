@@ -104,6 +104,38 @@ describe("delivery transition trigger", () => {
     })).toBe(true);
   });
 
+  it("routes mechanical repo blockers to CTO even when delivery state stays intake", () => {
+    const route = resolveDeliveryTransitionRoute({
+      previousIssue: { ...baseIssue, deliveryState: "intake", blockerType: null },
+      nextDeliveryState: "intake",
+      nextBlockerType: "repo_dirty",
+      agents,
+    });
+
+    expect(route).toMatchObject({
+      fromState: "intake",
+      toState: "intake",
+      targetAgentName: "CTO",
+      targetAgentId: "agent-cto",
+      wakeReason: "delivery_repo_gate",
+    });
+  });
+
+  it("marks mechanical repo blockers as reconcile candidates", () => {
+    expect(isDeliveryTransitionReconcileCandidate({
+      ...baseIssue,
+      status: "in_review",
+      deliveryState: "intake",
+      blockerType: "preflight_failed",
+    })).toBe(true);
+    expect(isDeliveryTransitionReconcileCandidate({
+      ...baseIssue,
+      status: "blocked",
+      deliveryState: "intake",
+      blockerType: "repo_dirty",
+    })).toBe(true);
+  });
+
   it("does not reconcile blocked delivery states through the machine delivery lane", () => {
     expect(isDeliveryTransitionReconcileCandidate({
       ...baseIssue,

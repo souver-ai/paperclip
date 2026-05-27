@@ -63,6 +63,19 @@ const DELIVERY_TRANSITION_TARGETS: Record<string, { agentName: string; wakeReaso
   },
 };
 
+const MECHANICAL_REPO_BLOCKER_TYPES = new Set([
+  "repo_dirty",
+  "preflight_failed",
+  "branch_stale",
+  "no_upstream",
+  "pr_publication_failed",
+]);
+
+const MECHANICAL_REPO_TARGET = {
+  agentName: "CTO",
+  wakeReason: "delivery_repo_gate",
+};
+
 const MACHINE_ACTIONABLE_STATUSES = new Set(["todo", "in_progress", "in_review"]);
 const HUMAN_GATE_STATES = new Set([
   "merged_verified",
@@ -80,11 +93,15 @@ export function isDeliveryTransitionActionableState(value: string | null | undef
 }
 
 export function isDeliveryTransitionReconcileCandidate(issue: DeliveryTransitionIssue) {
-  if (!MACHINE_ACTIONABLE_STATUSES.has(issue.status)) return false;
-  if (!isDeliveryTransitionActionableState(issue.deliveryState)) return false;
-  if (HUMAN_GATE_STATES.has(issue.deliveryState)) return false;
+  const isMechanicalRepoBlocker =
+    issue.blockerType != null && MECHANICAL_REPO_BLOCKER_TYPES.has(issue.blockerType);
+  if (!MACHINE_ACTIONABLE_STATUSES.has(issue.status) && !(issue.status === "blocked" && isMechanicalRepoBlocker)) {
+    return false;
+  }
   if (issue.benjaminRequired === true || issue.blockerType === "approval_benjamin") return false;
-  return true;
+  if (isDeliveryTransitionActionableState(issue.deliveryState) && !HUMAN_GATE_STATES.has(issue.deliveryState)) return true;
+  if (isMechanicalRepoBlocker) return true;
+  return false;
 }
 
 export function findDeliveryTransitionAgent(
@@ -108,17 +125,23 @@ export function resolveDeliveryTransitionRoute(input: {
 }): DeliveryTransitionRoute | null {
   const fromState = input.previousIssue.deliveryState;
   const toState = input.nextDeliveryState;
-  if (!toState || (!input.allowCurrentState && fromState === toState)) return null;
+  const isMechanicalRepoBlocker =
+    input.nextBlockerType != null && MECHANICAL_REPO_BLOCKER_TYPES.has(input.nextBlockerType);
+  if (!toState || (!input.allowCurrentState && fromState === toState && !isMechanicalRepoBlocker)) return null;
   if (!isDeliveryTransitionReconcileCandidate({
     ...input.previousIssue,
     deliveryState: toState,
     blockerType: input.nextBlockerType ?? input.previousIssue.blockerType,
     benjaminRequired: input.nextBenjaminRequired ?? input.previousIssue.benjaminRequired,
   })) return null;
-  if (HUMAN_GATE_STATES.has(toState)) return null;
+  if (HUMAN_GATE_STATES.has(toState) && !isMechanicalRepoBlocker) return null;
   if (input.nextBenjaminRequired === true || input.nextBlockerType === "approval_benjamin") return null;
 
-  const target = DELIVERY_TRANSITION_TARGETS[toState];
+  const target =
+    DELIVERY_TRANSITION_TARGETS[toState]
+    ?? (isMechanicalRepoBlocker
+      ? MECHANICAL_REPO_TARGET
+      : null);
   if (!target) return null;
 
   const agent = findDeliveryTransitionAgent(input.agents, target.agentName);
