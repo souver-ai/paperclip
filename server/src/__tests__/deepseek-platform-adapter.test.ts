@@ -65,10 +65,49 @@ describe("deepseek_platform adapter", () => {
     expect(ctx.onMeta).toHaveBeenCalledWith({
       adapterType: "deepseek_platform",
       command: "deepseek.chat.completions",
-      commandNotes: ["baseUrl=https://api.deepseek.com", "model=deepseek-chat"],
+      commandNotes: ["baseUrlOrigin=https://api.deepseek.com", "model=deepseek-chat"],
     });
     expect(JSON.stringify(result)).not.toContain("sk-test-secret");
     expect(JSON.stringify((ctx.onMeta as ReturnType<typeof vi.fn>).mock.calls)).not.toContain("sk-test-secret");
+  });
+
+  it("rejects unsafe base URLs before metadata or network calls", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const ctx = buildCtx({
+      model: "deepseek-chat",
+      baseUrl: "http://api.deepseek.com?token=leak",
+      env: {
+        DEEPSEEK_API_KEY: "sk-test-secret",
+      },
+    });
+
+    const result = await deepseekPlatformAdapter.execute(ctx);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.errorCode).toBe("deepseek_base_url_rejected");
+    expect(result.errorMessage).toBe("blocked: DeepSeek Platform base URL must use HTTPS");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(ctx.onMeta).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("token=leak");
+  });
+
+  it("rejects non-official base URLs unless an audited proxy is explicitly allowed", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await deepseekPlatformAdapter.execute(buildCtx({
+      model: "deepseek-chat",
+      baseUrl: "https://proxy.example.test",
+      env: {
+        DEEPSEEK_API_KEY: "sk-test-secret",
+      },
+    }));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.errorCode).toBe("deepseek_base_url_rejected");
+    expect(result.errorMessage).toBe("blocked: DeepSeek Platform base URL must be the official DeepSeek endpoint");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reports auth as a test-environment blocker without probing live APIs", async () => {
@@ -80,5 +119,22 @@ describe("deepseek_platform adapter", () => {
 
     expect(result.status).toBe("fail");
     expect(result.checks.some((check) => check.code === "deepseek_provider_auth_missing")).toBe(true);
+  });
+
+  it("reports rejected base URLs as environment-test blockers", async () => {
+    const result = await deepseekPlatformAdapter.testEnvironment({
+      companyId: "company-1",
+      adapterType: "deepseek_platform",
+      config: {
+        baseUrl: "https://proxy.example.test",
+        env: { DEEPSEEK_API_KEY: "sk-test-secret" },
+      },
+    });
+
+    expect(result.status).toBe("fail");
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      code: "deepseek_base_url_rejected",
+      level: "error",
+    }));
   });
 });

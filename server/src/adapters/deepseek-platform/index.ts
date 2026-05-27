@@ -10,6 +10,7 @@ import type {
 import { asNumber, asString, parseObject } from "../utils.js";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
+const DEFAULT_BASE_URL_ORIGIN = new URL(DEFAULT_BASE_URL).origin;
 const DEFAULT_MODEL = "deepseek-chat";
 const MODELS = [
   { id: "deepseek-chat", label: "DeepSeek Chat" },
@@ -25,6 +26,29 @@ function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentT
 function normalizeBaseUrl(value: unknown): string {
   const raw = asString(value, DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL;
   return raw.replace(/\/+$/, "");
+}
+
+function resolveBaseUrl(config: Record<string, unknown>): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(normalizeBaseUrl(config.baseUrl));
+  } catch {
+    throw new Error("blocked: DeepSeek Platform base URL is invalid");
+  }
+
+  if (parsed.protocol !== "https:") {
+    throw new Error("blocked: DeepSeek Platform base URL must use HTTPS");
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error("blocked: DeepSeek Platform base URL must not include credentials, query, or fragment");
+  }
+
+  const allowAuditedProxy = parseObject(config.security).allowAuditedProxyBaseUrl === true;
+  if (parsed.origin !== DEFAULT_BASE_URL_ORIGIN && !allowAuditedProxy) {
+    throw new Error("blocked: DeepSeek Platform base URL must be the official DeepSeek endpoint");
+  }
+
+  return parsed;
 }
 
 function resolveApiKey(config: Record<string, unknown>): string | null {
@@ -60,6 +84,7 @@ function readUsage(payload: unknown): AdapterExecutionResult["usage"] {
 
 async function callDeepSeek(input: {
   config: Record<string, unknown>;
+  baseUrl: URL;
   prompt: string;
   signal?: AbortSignal;
 }): Promise<unknown> {
@@ -70,7 +95,6 @@ async function callDeepSeek(input: {
     throw err;
   }
 
-  const baseUrl = normalizeBaseUrl(input.config.baseUrl);
   const model = asString(input.config.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
   const systemPrompt = asString(
     input.config.systemPrompt,
@@ -79,7 +103,7 @@ async function callDeepSeek(input: {
   const maxTokens = Math.max(1, Math.floor(asNumber(input.config.maxTokens, 1200)));
   const temperature = Math.max(0, Math.min(2, asNumber(input.config.temperature, 0.2)));
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetch(new URL("/chat/completions", input.baseUrl).toString(), {
     method: "POST",
     headers: {
       "authorization": `Bearer ${apiKey}`,
@@ -111,20 +135,21 @@ async function callDeepSeek(input: {
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const config = parseObject(ctx.config);
   const model = asString(config.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
-  const baseUrl = normalizeBaseUrl(config.baseUrl);
   const timeoutMs = Math.max(1, asNumber(config.timeoutSec, 90)) * 1000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  await ctx.onMeta?.({
-    adapterType: "deepseek_platform",
-    command: "deepseek.chat.completions",
-    commandNotes: [`baseUrl=${baseUrl}`, `model=${model}`],
-  });
-
   try {
+    const baseUrl = resolveBaseUrl(config);
+    await ctx.onMeta?.({
+      adapterType: "deepseek_platform",
+      command: "deepseek.chat.completions",
+      commandNotes: [`baseUrlOrigin=${baseUrl.origin}`, `model=${model}`],
+    });
+
     const payload = await callDeepSeek({
       config,
+      baseUrl,
       prompt: buildPrompt(ctx),
       signal: controller.signal,
     });
@@ -145,7 +170,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       resultJson: {
         provider: "deepseek",
         model,
-        baseUrl,
+        baseUrlOrigin: baseUrl.origin,
       },
     };
   } catch (err) {
@@ -169,6 +194,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         ? "deepseek_provider_auth_missing"
         : message.includes("auth rejected")
           ? "deepseek_provider_auth_rejected"
+          : message.includes("base URL")
+            ? "deepseek_base_url_rejected"
           : "deepseek_provider_error",
       errorMessage: message,
       provider: "deepseek",
@@ -184,29 +211,21 @@ export async function testEnvironment(
 ): Promise<AdapterEnvironmentTestResult> {
   const config = parseObject(ctx.config);
   const checks: AdapterEnvironmentCheck[] = [];
-  const baseUrl = normalizeBaseUrl(config.baseUrl);
 
   try {
-    const parsed = new URL(baseUrl);
-    if (parsed.protocol !== "https:") {
-      checks.push({
-        code: "deepseek_base_url_not_https",
-        level: "warn",
-        message: "DeepSeek Platform base URL is not HTTPS.",
-      });
-    } else {
-      checks.push({
-        code: "deepseek_base_url_valid",
-        level: "info",
-        message: "DeepSeek Platform base URL is configured.",
-      });
-    }
-  } catch {
+    const parsed = resolveBaseUrl(config);
     checks.push({
-      code: "deepseek_base_url_invalid",
+      code: "deepseek_base_url_valid",
+      level: "info",
+      message: `DeepSeek Platform base URL origin is ${parsed.origin}.`,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "DeepSeek Platform base URL is invalid.";
+    checks.push({
+      code: "deepseek_base_url_rejected",
       level: "error",
-      message: "DeepSeek Platform base URL is invalid.",
-      hint: "Use https://api.deepseek.com unless you have a trusted proxy.",
+      message,
+      hint: "Use https://api.deepseek.com unless an audited proxy has been explicitly allowed.",
     });
   }
 
