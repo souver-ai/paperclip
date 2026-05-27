@@ -98,23 +98,32 @@ describe("delivery transition trigger", () => {
   it("marks stale machine-actionable delivery states as reconcile candidates", () => {
     expect(isDeliveryTransitionReconcileCandidate({
       ...baseIssue,
-      status: "blocked",
+      status: "in_review",
       deliveryState: "merge_ready",
       assigneeAgentId: "agent-dev",
     })).toBe(true);
   });
 
-  it("does not reconcile human protected delivery gates", () => {
+  it("does not reconcile blocked delivery states through the machine delivery lane", () => {
     expect(isDeliveryTransitionReconcileCandidate({
       ...baseIssue,
       status: "blocked",
+      deliveryState: "merge_ready",
+      assigneeAgentId: "agent-dev",
+    })).toBe(false);
+  });
+
+  it("does not reconcile human protected delivery gates", () => {
+    expect(isDeliveryTransitionReconcileCandidate({
+      ...baseIssue,
+      status: "in_review",
       deliveryState: "merge_ready",
       blockerType: "approval_benjamin",
       benjaminRequired: true,
     })).toBe(false);
     expect(isDeliveryTransitionReconcileCandidate({
       ...baseIssue,
-      status: "blocked",
+      status: "in_review",
       deliveryState: "parked_hold",
     })).toBe(false);
   });

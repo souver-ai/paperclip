@@ -63,7 +63,7 @@ const DELIVERY_TRANSITION_TARGETS: Record<string, { agentName: string; wakeReaso
   },
 };
 
-const MACHINE_ACTIONABLE_STATUSES = new Set(["todo", "in_progress", "blocked", "in_review"]);
+const MACHINE_ACTIONABLE_STATUSES = new Set(["todo", "in_progress", "in_review"]);
 const HUMAN_GATE_STATES = new Set([
   "merged_verified",
   "live_verified",
