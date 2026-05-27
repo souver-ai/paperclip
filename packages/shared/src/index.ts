@@ -1214,3 +1214,4 @@ export type {
   EnvironmentSupportStatus,
 } from "./environment-support.js";
 export type { QuotaGovernorBand, ForecastConfidence, QuotaGovernorCadenceEffect, QuotaGovernorDriver, QuotaGovernorSnapshot, QuotaGovernorLoadResult } from "./types/index.js";
+export type { AutonomyBucketState, AutonomyPeriodKey, AutonomyKpis, AutonomyHeatmapCell, AutonomyAgentBreakdown, AutonomyIncident, AutonomyReport } from "./types/index.js";

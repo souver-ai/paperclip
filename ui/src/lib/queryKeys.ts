@@ -161,6 +161,7 @@ export const queryKeys = {
     ["user-profile", companyId, userSlug] as const,
   sidebarBadges: (companyId: string) => ["sidebar-badges", companyId] as const,
   quotaGovernor: (companyId: string) => ["quota-governor", companyId] as const,
+  autonomy: (companyId: string, period: string) => ["autonomy", companyId, period] as const,
   inboxDismissals: (companyId: string) => ["inbox-dismissals", companyId] as const,
   activity: (companyId: string) => ["activity", companyId] as const,
   costs: (companyId: string, from?: string, to?: string) =>
