@@ -57,6 +57,8 @@ describe("company routes", () => {
     const sidebarPaths = [
       "/dashboard",
       "/control-tower",
+      "/quota-governor",
+      "/autonomy",
       "/inbox",
       "/approvals/pending",
       "/issues",
