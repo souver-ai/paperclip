@@ -81,6 +81,11 @@ import {
 } from "./run-liveness.js";
 import { logActivity, publishPluginDomainEvent, type LogActivityInput } from "./activity-log.js";
 import {
+  buildDeliveryTransitionWakeup,
+  isDeliveryTransitionReconcileCandidate,
+  resolveDeliveryTransitionRoute,
+} from "./delivery-transition-trigger.js";
+import {
   buildWorkspaceReadyComment,
   cleanupExecutionWorkspaceArtifacts,
   ensureRuntimeServicesForRun,
@@ -185,6 +190,8 @@ const MAX_RUN_EVENT_PAYLOAD_DEPTH = 6;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MIN = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 50;
+const DELIVERY_TRANSITION_RECONCILE_LIMIT = 3;
+const DELIVERY_TRANSITION_RECONCILE_BUCKET_MS = 10 * 60 * 1000;
 const LIVENESS_BOOKKEEPING_ACTIVITY_ACTIONS = [
   "environment.lease_acquired",
   "environment.lease_released",
@@ -1594,6 +1601,7 @@ export function shouldResetTaskSessionForWake(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {
   if (contextSnapshot?.forceFreshSession === true) return true;
+  if (isDeliveryTransitionWake(contextSnapshot)) return true;
 
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
   if (
@@ -1625,6 +1633,21 @@ function allowsIssueInteractionWake(
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
   if (!wakeReason || !ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS.has(wakeReason)) return false;
   return Boolean(deriveCommentId(contextSnapshot, null));
+}
+
+function isDeliveryTransitionWake(
+  contextSnapshot: Record<string, unknown> | null | undefined,
+) {
+  if (contextSnapshot?.deliveryTransitionWake !== true) return false;
+  if (readNonEmptyString(contextSnapshot?.source) !== "issue.delivery_state_transition") return false;
+  const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
+  return Boolean(wakeReason?.startsWith("delivery_"));
+}
+
+function shouldForceImmediateIssueWake(
+  contextSnapshot: Record<string, unknown> | null | undefined,
+) {
+  return contextSnapshot?.forceImmediateIssueWake === true && isDeliveryTransitionWake(contextSnapshot);
 }
 
 async function listUnresolvedBlockerSummaries(
@@ -8840,7 +8863,82 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           activeExecutionRun = null;
         }
 
-        if (activeExecutionRun && await cancelStaleScheduledRetry(activeExecutionRun)) {
+        const cancelScheduledRetryForImmediateWake = async (scheduledRun: typeof heartbeatRuns.$inferSelect) => {
+          if (scheduledRun.status !== "scheduled_retry" || !shouldForceImmediateIssueWake(enrichedContextSnapshot)) {
+            return false;
+          }
+
+          const now = new Date();
+          const reason = "Cancelled because a delivery transition requested immediate issue execution";
+          const cancelled = await tx
+            .update(heartbeatRuns)
+            .set({
+              status: "cancelled",
+              finishedAt: now,
+              error: reason,
+              errorCode: "delivery_transition_immediate_wake",
+              updatedAt: now,
+            })
+            .where(and(eq(heartbeatRuns.id, scheduledRun.id), eq(heartbeatRuns.status, "scheduled_retry")))
+            .returning()
+            .then((rows) => rows[0] ?? null);
+
+          if (!cancelled) return false;
+
+          if (scheduledRun.wakeupRequestId) {
+            await tx
+              .update(agentWakeupRequests)
+              .set({
+                status: "cancelled",
+                finishedAt: now,
+                error: reason,
+                updatedAt: now,
+              })
+              .where(eq(agentWakeupRequests.id, scheduledRun.wakeupRequestId));
+          }
+
+          if (issue.executionRunId === scheduledRun.id) {
+            await tx
+              .update(issues)
+              .set({
+                executionRunId: null,
+                executionAgentNameKey: null,
+                executionLockedAt: null,
+                updatedAt: now,
+              })
+              .where(and(eq(issues.id, issue.id), eq(issues.executionRunId, scheduledRun.id)));
+          }
+
+          const [eventSeq] = await tx
+            .select({ maxSeq: sql<number | null>`max(${heartbeatRunEvents.seq})` })
+            .from(heartbeatRunEvents)
+            .where(eq(heartbeatRunEvents.runId, cancelled.id));
+
+          await tx.insert(heartbeatRunEvents).values({
+            companyId: cancelled.companyId,
+            runId: cancelled.id,
+            agentId: cancelled.agentId,
+            seq: Number(eventSeq?.maxSeq ?? 0) + 1,
+            eventType: "lifecycle",
+            stream: "system",
+            level: "warn",
+            message: "Scheduled retry cancelled because delivery transition requested immediate execution",
+            payload: {
+              issueId: issue.id,
+              wakeReason: readNonEmptyString(enrichedContextSnapshot.wakeReason),
+              fromDeliveryState: readNonEmptyString(enrichedContextSnapshot.fromDeliveryState),
+              toDeliveryState: readNonEmptyString(enrichedContextSnapshot.toDeliveryState),
+            },
+          });
+
+          return true;
+        };
+
+        if (
+          activeExecutionRun &&
+          (await cancelStaleScheduledRetry(activeExecutionRun) ||
+            await cancelScheduledRetryForImmediateWake(activeExecutionRun))
+        ) {
           activeExecutionRun = null;
         }
 
@@ -8875,7 +8973,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             .then((rows) => rows[0] ?? null);
 
           if (legacyRun) {
-            if (await cancelStaleScheduledRetry(legacyRun)) {
+            if (
+              await cancelStaleScheduledRetry(legacyRun) ||
+              await cancelScheduledRetryForImmediateWake(legacyRun)
+            ) {
               activeExecutionRun = null;
             } else {
               activeExecutionRun = legacyRun;
@@ -9743,6 +9844,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       let checked = 0;
       let enqueued = 0;
       let skipped = 0;
+      let deliveryReconcileChecked = 0;
+      let deliveryReconcileEnqueued = 0;
+      let deliveryReconcileSkipped = 0;
 
       for (const agent of allAgents) {
         if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") continue;
@@ -9770,12 +9874,97 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         else skipped += 1;
       }
 
+      const deliveryCandidates = await db
+        .select()
+        .from(issues)
+        .where(and(
+          inArray(issues.deliveryState, ["pr_ready", "changes_requested", "merge_ready", "merged", "target_verifying"]),
+          inArray(issues.status, ["todo", "in_progress", "in_review"]),
+          isNull(issues.executionRunId),
+        ))
+        .orderBy(asc(issues.updatedAt))
+        .limit(DELIVERY_TRANSITION_RECONCILE_LIMIT);
+      const reconcileBucket = Math.floor(now.getTime() / DELIVERY_TRANSITION_RECONCILE_BUCKET_MS);
+      for (const issue of deliveryCandidates) {
+        deliveryReconcileChecked += 1;
+        if (!isDeliveryTransitionReconcileCandidate(issue)) {
+          deliveryReconcileSkipped += 1;
+          continue;
+        }
+
+        const route = resolveDeliveryTransitionRoute({
+          previousIssue: issue,
+          nextDeliveryState: issue.deliveryState,
+          nextBlockerType: issue.blockerType,
+          nextBenjaminRequired: issue.benjaminRequired,
+          agents: allAgents,
+          allowCurrentState: true,
+        });
+        if (!route) {
+          deliveryReconcileSkipped += 1;
+          continue;
+        }
+
+        if (route.targetAgentId && issue.assigneeAgentId !== route.targetAgentId) {
+          await db
+            .update(issues)
+            .set({
+              assigneeAgentId: route.targetAgentId,
+              assigneeUserId: null,
+              updatedAt: now,
+            })
+            .where(and(eq(issues.id, issue.id), eq(issues.companyId, issue.companyId)));
+          issue.assigneeAgentId = route.targetAgentId;
+          issue.assigneeUserId = null;
+        }
+
+        await logActivity(db, {
+          companyId: issue.companyId,
+          actorType: "system",
+          actorId: "delivery_transition_reconciler",
+          agentId: null,
+          runId: null,
+          action: route.targetAgentId
+            ? "issue.delivery_transition_routed"
+            : "issue.delivery_transition_route_missing",
+          entityType: "issue",
+          entityId: issue.id,
+          details: {
+            identifier: issue.identifier,
+            fromDeliveryState: route.fromState,
+            toDeliveryState: route.toState,
+            targetAgentName: route.targetAgentName,
+            targetAgentId: route.targetAgentId,
+            wakeReason: route.wakeReason,
+            source: "delivery_transition_reconciler",
+          },
+        });
+
+        const deliveryWakeup = buildDeliveryTransitionWakeup({
+          issue,
+          route,
+          requestedByActorType: "system",
+          requestedByActorId: "delivery_transition_reconciler",
+        });
+        if (!deliveryWakeup) {
+          deliveryReconcileSkipped += 1;
+          continue;
+        }
+
+        const run = await enqueueWakeup(deliveryWakeup.agentId, {
+          ...deliveryWakeup.wakeup,
+          idempotencyKey: `delivery-transition-reconcile:${issue.id}:${route.toState}:${reconcileBucket}`,
+        });
+        if (run) deliveryReconcileEnqueued += 1;
+        else deliveryReconcileSkipped += 1;
+      }
+
       const issueMonitors = await tickDueIssueMonitors(now);
 
       return {
-        checked: checked + issueMonitors.checked,
-        enqueued: enqueued + issueMonitors.triggered,
-        skipped: skipped + issueMonitors.skipped,
+        checked: checked + issueMonitors.checked + deliveryReconcileChecked,
+        enqueued: enqueued + issueMonitors.triggered + deliveryReconcileEnqueued,
+        skipped: skipped + issueMonitors.skipped + deliveryReconcileSkipped,
       };
     },
 

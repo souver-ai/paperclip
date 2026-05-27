@@ -36,6 +36,11 @@ vi.mock("../services/index.js", () => ({
   }),
   agentService: () => ({
     getById: vi.fn(async () => null),
+    list: vi.fn(async () => [
+      { id: ASSIGNEE_AGENT_ID, name: "CTO", status: "idle" },
+      { id: "22222222-2222-4222-8222-222222222222", name: "Dev Feature", status: "idle" },
+      { id: "33333333-3333-4333-8333-333333333333", name: "Test Architect", status: "idle" },
+    ]),
     resolveByReference: vi.fn(async (_companyId: string, raw: string) => ({
       ambiguous: false,
       agent: { id: raw },
@@ -106,6 +111,11 @@ function registerModuleMocks() {
     }),
     agentService: () => ({
       getById: vi.fn(async () => null),
+      list: vi.fn(async () => [
+        { id: ASSIGNEE_AGENT_ID, name: "CTO", status: "idle" },
+        { id: "22222222-2222-4222-8222-222222222222", name: "Dev Feature", status: "idle" },
+        { id: "33333333-3333-4333-8333-333333333333", name: "Test Architect", status: "idle" },
+      ]),
       resolveByReference: vi.fn(async (_companyId: string, raw: string) => ({
         ambiguous: false,
         agent: { id: raw },
@@ -310,6 +320,59 @@ describe("issue update comment wakeups", () => {
           wakeCommentId: "comment-2",
           wakeReason: "issue_commented",
           source: "issue.comment",
+        }),
+      }),
+    );
+  });
+
+  it("keeps delivery transition wakeups when a comment is attached to the same update", async () => {
+    const existing = makeIssue({
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      assigneeUserId: null,
+      status: "in_review",
+      deliveryState: "pr_ready",
+    });
+    const updated = {
+      ...existing,
+      deliveryState: "merge_ready",
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+    };
+    mockIssueService.getById.mockResolvedValue(existing);
+    mockIssueService.update.mockResolvedValue(updated);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-3",
+      issueId: existing.id,
+      companyId: existing.companyId,
+      body: "routing check",
+    });
+
+    const res = await request(await createApp())
+      .patch(`/api/issues/${existing.id}`)
+      .send({
+        deliveryState: "merge_ready",
+        comment: "routing check",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "automation",
+        reason: "delivery_merge_ready",
+        payload: expect.objectContaining({
+          issueId: existing.id,
+          deliveryTransitionWake: true,
+          forceImmediateIssueWake: true,
+          mutation: "delivery_state_transition",
+        }),
+        contextSnapshot: expect.objectContaining({
+          issueId: existing.id,
+          taskId: existing.id,
+          source: "issue.delivery_state_transition",
+          deliveryTransitionWake: true,
+          forceImmediateIssueWake: true,
+          wakeReason: "delivery_merge_ready",
         }),
       }),
     );
