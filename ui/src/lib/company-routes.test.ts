@@ -42,6 +42,7 @@ describe("company routes", () => {
     expect(applyCompanyPrefix("/approvals/pending", "SOU")).toBe("/SOU/approvals/pending");
     expect(toCompanyRelativePath("/SOU/approvals/approval-123")).toBe("/approvals/approval-123");
   });
+
   it("treats harness and tests as board routes that need a company prefix", () => {
     expect(isBoardPathWithoutPrefix("/harness")).toBe(true);
     expect(isBoardPathWithoutPrefix("/tests")).toBe(true);
@@ -50,5 +51,34 @@ describe("company routes", () => {
     expect(applyCompanyPrefix("/tests/run-42", "SOU")).toBe("/SOU/tests/run-42");
     expect(toCompanyRelativePath("/SOU/harness")).toBe("/harness");
     expect(toCompanyRelativePath("/SOU/tests/run-42")).toBe("/tests/run-42");
+  });
+
+  it("routes all core sidebar board links through the active company prefix", () => {
+    const sidebarPaths = [
+      "/dashboard",
+      "/control-tower",
+      "/inbox",
+      "/approvals/pending",
+      "/issues",
+      "/features",
+      "/harness",
+      "/tests",
+      "/routines",
+      "/goals",
+      "/workspaces",
+      "/org",
+      "/skills",
+      "/costs",
+      "/activity",
+      "/company/settings",
+      "/search",
+    ];
+
+    for (const path of sidebarPaths) {
+      expect(isBoardPathWithoutPrefix(path)).toBe(true);
+      expect(extractCompanyPrefixFromPath(path)).toBeNull();
+      expect(applyCompanyPrefix(path, "SOU")).toBe(`/SOU${path}`);
+      expect(toCompanyRelativePath(`/SOU${path}`)).toBe(path);
+    }
   });
 });
