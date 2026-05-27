@@ -67,6 +67,33 @@ describe("delivery transition trigger", () => {
     expect(route).toBeNull();
   });
 
+  it("can reconcile an already-actionable delivery state to its owner", () => {
+    const route = resolveDeliveryTransitionRoute({
+      previousIssue: { ...baseIssue, deliveryState: "changes_requested" },
+      nextDeliveryState: "changes_requested",
+      agents,
+      allowCurrentState: true,
+    });
+
+    expect(route).toMatchObject({
+      fromState: "changes_requested",
+      toState: "changes_requested",
+      targetAgentName: "Dev Feature",
+      targetAgentId: "agent-dev",
+      wakeReason: "delivery_changes_requested",
+    });
+  });
+
+  it("does not reconcile current-state delivery unless explicitly allowed", () => {
+    const route = resolveDeliveryTransitionRoute({
+      previousIssue: { ...baseIssue, deliveryState: "changes_requested" },
+      nextDeliveryState: "changes_requested",
+      agents,
+    });
+
+    expect(route).toBeNull();
+  });
+
   it("builds a scoped wakeup payload for the routed agent", () => {
     const route = resolveDeliveryTransitionRoute({
       previousIssue: baseIssue,

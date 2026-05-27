@@ -3273,7 +3273,20 @@ export function issueRoutes(
     }
     Object.assign(updateFields, transition.patch);
     let deliveryTransitionRoute: DeliveryTransitionRoute | null = null;
-    if (typeof updateFields.deliveryState === "string" && updateFields.deliveryState !== existing.deliveryState) {
+    const requestedDeliveryState =
+      typeof updateFields.deliveryState === "string" ? updateFields.deliveryState : existing.deliveryState;
+    const deliveryStateChanged =
+      typeof updateFields.deliveryState === "string" && updateFields.deliveryState !== existing.deliveryState;
+    const explicitAssigneePatch =
+      normalizedAssigneeAgentId !== undefined ||
+      updateFields.assigneeAgentId !== undefined ||
+      updateFields.assigneeUserId !== undefined;
+    const shouldReconcileDeliveryOwner =
+      !deliveryStateChanged &&
+      !explicitAssigneePatch &&
+      typeof requestedDeliveryState === "string" &&
+      !["backlog", "done", "cancelled"].includes(existing.status);
+    if (deliveryStateChanged || shouldReconcileDeliveryOwner) {
       let companyAgents: Awaited<ReturnType<typeof agentsSvc.list>> = [];
       try {
         companyAgents = await agentsSvc.list(existing.companyId);
@@ -3288,17 +3301,29 @@ export function issueRoutes(
           : (updateFields.benjaminRequired as boolean | null);
       deliveryTransitionRoute = resolveDeliveryTransitionRoute({
         previousIssue: existing,
-        nextDeliveryState: updateFields.deliveryState,
+        nextDeliveryState: requestedDeliveryState,
         nextBlockerType,
         nextBenjaminRequired,
         agents: companyAgents,
+        allowCurrentState: shouldReconcileDeliveryOwner,
       });
+      if (
+        shouldReconcileDeliveryOwner &&
+        deliveryTransitionRoute?.targetAgentId &&
+        existing.assigneeAgentId === deliveryTransitionRoute.targetAgentId &&
+        !existing.assigneeUserId
+      ) {
+        deliveryTransitionRoute = null;
+      }
       if (
         deliveryTransitionRoute?.targetAgentId &&
         normalizedAssigneeAgentId === undefined &&
         updateFields.assigneeAgentId === undefined
       ) {
         updateFields.assigneeAgentId = deliveryTransitionRoute.targetAgentId;
+        if (updateFields.assigneeUserId === undefined) {
+          updateFields.assigneeUserId = null;
+        }
       }
     }
     const nextStatus = typeof updateFields.status === "string" ? updateFields.status : existing.status;
