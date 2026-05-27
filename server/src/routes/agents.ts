@@ -1144,6 +1144,56 @@ export function agentRoutes(
     await assertBoardCanManageAgentsForCompany(req, targetAgent.companyId);
   }
 
+  async function assertCanVerifyInstructionsPath(
+    req: Request,
+    targetAgent: { id: string; companyId: string },
+  ) {
+    assertCompanyAccess(req, targetAgent.companyId);
+    if (req.actor.type === "board") {
+      await assertCanReadConfigurations(req, targetAgent.companyId);
+      return;
+    }
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+
+    const actorAgent = await svc.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== targetAgent.companyId) {
+      throw forbidden("Agent key cannot access another company");
+    }
+    if (actorAgent.id === targetAgent.id) return;
+    if (actorAgent.role === "security") return;
+
+    const allowedByGrant = await access.hasPermission(
+      targetAgent.companyId,
+      "agent",
+      actorAgent.id,
+      "agents:create",
+    );
+    if (allowedByGrant || canCreateAgents(actorAgent)) return;
+
+    const chainOfCommand = await svc.getChainOfCommand(targetAgent.id);
+    if (chainOfCommand.some((manager) => manager.id === actorAgent.id)) return;
+
+    throw forbidden("Missing permission to verify agent instructions path");
+  }
+
+  function readInstructionsPathVerification(agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>, rawKey: unknown) {
+    const explicitKey = asNonEmptyString(rawKey);
+    if (explicitKey && !KNOWN_INSTRUCTIONS_PATH_KEYS.has(explicitKey)) {
+      throw unprocessable("Unsupported instructions path adapterConfigKey");
+    }
+    const defaultKey = resolveInstructionsPathKey(agent.adapterType);
+    const adapterConfigKey = explicitKey ?? defaultKey;
+    const adapterConfig = asRecord(agent.adapterConfig) ?? {};
+    const pathValue = adapterConfigKey ? asNonEmptyString(adapterConfig[adapterConfigKey]) : null;
+    return {
+      agentId: agent.id,
+      adapterType: agent.adapterType,
+      adapterConfigKey,
+      path: pathValue,
+      configured: Boolean(pathValue),
+    };
+  }
+
   function assertNoAgentInstructionsConfigMutation(
     req: Request,
     adapterConfig: Record<string, unknown> | null | undefined,
@@ -2397,6 +2447,18 @@ export function agentRoutes(
       adapterConfigKey,
       path: pathValue,
     });
+  });
+
+  router.get("/agents/:id/instructions-path", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    await assertCanVerifyInstructionsPath(req, agent);
+    res.json(readInstructionsPathVerification(agent, req.query.adapterConfigKey));
   });
 
   router.get("/agents/:id/instructions-bundle", async (req, res) => {

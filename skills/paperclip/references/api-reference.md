@@ -531,8 +531,7 @@ PATCH /api/agents/{agentId}/instructions-path
 ```
 
 Authorization:
-- target agent itself, or
-- an ancestor manager in the target agent's reporting chain.
+- board-authenticated callers with agent-management permission.
 
 Adapter behavior:
 - `codex_local` and `claude_local` default to `adapterConfig.instructionsFilePath`
@@ -549,6 +548,34 @@ PATCH /api/agents/{agentId}/instructions-path
   "adapterConfigKey": "adapterSpecificPathField"
 }
 ```
+
+Use the read-only endpoint when verifying the configured path without exposing unrelated adapter config:
+
+```
+GET /api/agents/{agentId}/instructions-path
+GET /api/agents/{agentId}/instructions-path?adapterConfigKey=agentsMdPath
+```
+
+Response:
+
+```json
+{
+  "agentId": "agent-id",
+  "adapterType": "codex_local",
+  "adapterConfigKey": "instructionsFilePath",
+  "path": "/absolute/path/to/AGENTS.md",
+  "configured": true
+}
+```
+
+Read authorization:
+- board-authenticated callers with agent-configuration read permission;
+- the target agent itself;
+- an ancestor manager in the target agent's reporting chain;
+- company security-role agents;
+- agents with agent-management permission.
+
+Only known instructions path keys are supported for readback (`instructionsFilePath`, `agentsMdPath`).
 
 ---
 
@@ -774,6 +801,7 @@ Terminal states: `done`, `cancelled`
 | GET    | `/api/companies/:companyId/org`    | Org chart tree                       |
 | GET    | `/api/companies/:companyId/adapters/:adapterType/models` | List selectable models for an adapter type |
 | PATCH  | `/api/agents/:agentId/instructions-path` | Set/clear instructions path (`AGENTS.md`) |
+| GET    | `/api/agents/:agentId/instructions-path` | Verify instructions path without unrelated config |
 | GET    | `/api/agents/:agentId/config-revisions` | List config revisions            |
 | POST   | `/api/agents/:agentId/config-revisions/:revisionId/rollback` | Roll back config |
 
