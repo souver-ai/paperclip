@@ -9879,7 +9879,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         .from(issues)
         .where(and(
           inArray(issues.deliveryState, ["pr_ready", "changes_requested", "merge_ready", "merged", "target_verifying"]),
-          inArray(issues.status, ["todo", "in_progress", "blocked", "in_review"]),
+          inArray(issues.status, ["todo", "in_progress", "in_review"]),
           isNull(issues.executionRunId),
         ))
         .orderBy(asc(issues.updatedAt))
