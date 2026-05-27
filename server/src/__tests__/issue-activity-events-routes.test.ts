@@ -474,6 +474,53 @@ describe("issue activity event routes", () => {
     );
   });
 
+  it("prevents agent comments from regressing terminal delivery", async () => {
+    const issue = {
+      ...makeIssue(),
+      status: "done",
+      deliveryState: "merged_verified",
+      terminalEvidence: {
+        kind: "target_branch_verified",
+        command: "pnpm test issue-activity-events-routes",
+      },
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-1",
+      issueId: issue.id,
+      companyId: issue.companyId,
+      body: [
+        "Control Tower update:",
+        "- deliveryState: merge_ready",
+        "- blockerType: none",
+        "- benjaminRequired: false",
+      ].join("\n"),
+    });
+
+    const res = await request(await createApp({}, {
+      type: "agent",
+      agentId: issue.assigneeAgentId,
+      companyId: issue.companyId,
+      runId: "run-1",
+    }))
+      .post(`/api/issues/${issue.id}/comments`)
+      .send({
+        body: [
+          "Control Tower update:",
+          "- deliveryState: merge_ready",
+          "- blockerType: none",
+          "- benjaminRequired: false",
+        ].join("\n"),
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "terminal_delivery_state_regression",
+      requiredActor: "board",
+    });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
   it("rejects done transitions without terminal evidence", async () => {
     const issue = { ...makeIssue(), status: "in_progress" };
     mockIssueService.getById.mockResolvedValue(issue);
