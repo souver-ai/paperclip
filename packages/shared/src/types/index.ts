@@ -438,3 +438,4 @@ export type {
   PluginDatabaseNamespaceMode,
   PluginDatabaseNamespaceStatus,
 } from "./plugin.js";
+export type { QuotaGovernorBand, ForecastConfidence, QuotaGovernorCadenceEffect, QuotaGovernorDriver, QuotaGovernorSnapshot, QuotaGovernorLoadResult } from "./quota-governor.js";
