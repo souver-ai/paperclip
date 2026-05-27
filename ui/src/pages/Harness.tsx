@@ -1,25 +1,35 @@
-import { useEffect, useMemo, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CircleDot,
+  DatabaseZap,
   FlaskConical,
   GitPullRequest,
+  ListChecks,
   ShieldAlert,
   Sparkles,
   Timer,
 } from "lucide-react";
-import type { HarnessFinding, HarnessRun } from "@paperclipai/shared";
+import {
+  harnessBucket,
+  HARNESS_BUCKETS,
+  type HarnessBucket,
+  type HarnessFinding,
+  type HarnessItem,
+  type HarnessRun,
+} from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { deliveryControlApi } from "../api/deliveryControl";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { Button } from "../components/ui/button";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime } from "../lib/utils";
 
-type Tone = "default" | "success" | "warning" | "danger";
+type Tone = "default" | "success" | "warning" | "danger" | "info" | "caution";
 
 function formatLabel(value: string | null | undefined): string {
   if (!value) return "none";
@@ -40,11 +50,113 @@ function toneClasses(tone: Tone): string {
       return "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300";
     case "warning":
       return "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300";
+    case "caution":
+      return "border-orange-500/40 bg-orange-500/5 text-orange-700 dark:text-orange-300";
+    case "info":
+      return "border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300";
     case "danger":
       return "border-red-500/40 bg-red-500/5 text-red-700 dark:text-red-300";
     default:
       return "border-border bg-muted/40 text-muted-foreground";
   }
+}
+
+const HARNESS_BUCKET_TONE: Record<HarnessBucket, Tone> = {
+  delivered: "success",
+  delivered_unmerged: "caution",
+  done_noncode: "default",
+  in_progress: "info",
+  blocked: "danger",
+  queued: "warning",
+  abandoned: "default",
+};
+
+const HARNESS_BUCKET_LABEL: Record<HarnessBucket, string> = {
+  delivered: "Delivered",
+  delivered_unmerged: "Done · unmerged",
+  done_noncode: "Done (non-code)",
+  in_progress: "In progress",
+  blocked: "Blocked",
+  queued: "Queued",
+  abandoned: "Abandoned",
+};
+
+function itemBucket(item: HarnessItem): HarnessBucket {
+  return harnessBucket(item.issueStatus, item.deliveryState, item.title);
+}
+
+function HarnessFilterChip({
+  label,
+  count,
+  tone = "default",
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  tone?: Tone;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition",
+        active ? toneClasses(tone) : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      <span>{label}</span>
+      <span className="tabular-nums text-xs opacity-80">{count}</span>
+    </button>
+  );
+}
+
+function ItemsTable({ items }: { items: HarnessItem[] }) {
+  if (items.length === 0) {
+    return (
+      <div className="border border-dashed border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">
+        No harness work items in this view.
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto border border-border bg-card">
+      <table className="w-full min-w-[980px] text-left text-sm">
+        <thead className="border-b border-border text-xs text-muted-foreground">
+          <tr>
+            <th className="px-3 py-3 font-medium">Item</th>
+            <th className="px-3 py-3 font-medium">Status</th>
+            <th className="px-3 py-3 font-medium">Benchmark</th>
+            <th className="px-3 py-3 font-medium">Category</th>
+            <th className="px-3 py-3 font-medium">Delivery</th>
+            <th className="px-3 py-3 font-medium">Issue</th>
+            <th className="px-3 py-3 font-medium">Next action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.id} className="border-b border-border/70 last:border-0">
+              <td className="max-w-[300px] px-3 py-3 align-top">
+                <div className="font-mono text-xs text-primary">{item.itemId}</div>
+                <div className="mt-1 line-clamp-2 font-medium">{item.title}</div>
+              </td>
+              <td className="px-3 py-3 align-top"><Pill tone={HARNESS_BUCKET_TONE[itemBucket(item)]}>{HARNESS_BUCKET_LABEL[itemBucket(item)]}</Pill></td>
+              <td className="px-3 py-3 align-top text-muted-foreground">{item.benchmark ?? "none"}</td>
+              <td className="px-3 py-3 align-top text-muted-foreground">{formatLabel(item.category)}</td>
+              <td className="px-3 py-3 align-top"><Pill tone={toneFor(item.deliveryState)}>{formatLabel(item.deliveryState)}</Pill></td>
+              <td className="px-3 py-3 align-top">{issueLink(item.rootIssueId)}</td>
+              <td className="max-w-[300px] px-3 py-3 align-top">
+                <div className="line-clamp-3 text-muted-foreground">{item.nextAction ?? "none"}</div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function Pill({ children, tone = "default" }: { children: ReactNode; tone?: Tone }) {
@@ -200,6 +312,8 @@ function RunsTable({ runs }: { runs: HarnessRun[] }) {
 export function Harness() {
   const { selectedCompanyId, companies } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const queryClient = useQueryClient();
+  const [bucketFilter, setBucketFilter] = useState<HarnessBucket | "all">("all");
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Work", href: "/issues" }, { label: "Harness" }]);
@@ -210,12 +324,36 @@ export function Harness() {
     queryFn: () => deliveryControlApi.listHarnessRuns(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  const harnessItemsQuery = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.deliveryControl.harnessItems(selectedCompanyId) : ["delivery-control", "harness-items", "__disabled__"],
+    queryFn: () => deliveryControlApi.listHarnessItems(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
   const harnessFindingsQuery = useQuery({
     queryKey: selectedCompanyId ? queryKeys.deliveryControl.harnessFindings(selectedCompanyId) : ["delivery-control", "harness-findings", "__disabled__"],
     queryFn: () => deliveryControlApi.listHarnessFindings(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
 
+  const backfillMutation = useMutation({
+    mutationFn: () => deliveryControlApi.backfillHarnessItemsFromIssues(selectedCompanyId!),
+    onSuccess: () => {
+      if (selectedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.deliveryControl.harnessItems(selectedCompanyId) });
+      }
+    },
+  });
+
+  const items = useMemo(() => latestFirst(harnessItemsQuery.data ?? []), [harnessItemsQuery.data]);
+  const itemBucketCounts = useMemo(() => {
+    const counts = Object.fromEntries(HARNESS_BUCKETS.map((bucket) => [bucket, 0])) as Record<HarnessBucket, number>;
+    for (const item of items) counts[itemBucket(item)] += 1;
+    return counts;
+  }, [items]);
+  const visibleItems = useMemo(
+    () => (bucketFilter === "all" ? items : items.filter((item) => itemBucket(item) === bucketFilter)),
+    [items, bucketFilter],
+  );
   const runs = useMemo(() => latestFirst(harnessRunsQuery.data ?? []), [harnessRunsQuery.data]);
   const findings = useMemo(() => latestFirst(harnessFindingsQuery.data ?? []), [harnessFindingsQuery.data]);
   const openFindings = findings.filter((finding) => !["resolved", "waived"].includes(finding.status));
@@ -229,15 +367,24 @@ export function Harness() {
       : <EmptyState icon={FlaskConical} message="Select a company to open Harness." />;
   }
 
-  if (harnessRunsQuery.isLoading || harnessFindingsQuery.isLoading) return <PageSkeleton variant="list" />;
+  if (harnessRunsQuery.isLoading || harnessFindingsQuery.isLoading || harnessItemsQuery.isLoading) return <PageSkeleton variant="list" />;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal">Harness</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Runs, findings, failure patterns, and next actions from agent evaluation loops.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Experiments, runs, findings, and next actions from agent evaluation loops.</p>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => backfillMutation.mutate()}
+          disabled={backfillMutation.isPending}
+        >
+          <DatabaseZap className="h-4 w-4" />
+          {backfillMutation.isPending ? "Backfilling..." : "Backfill"}
+        </Button>
         {harnessRunsQuery.error || harnessFindingsQuery.error ? (
           <div className="flex items-center gap-2 border border-red-500/40 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
             <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -253,7 +400,35 @@ export function Harness() {
         <Metric label="Open findings" value={openFindings.length} tone={openFindings.length > 0 ? "warning" : "success"} />
       </div>
 
-      {!hasHarnessData ? <HarnessEmptyState /> : null}
+      {!hasHarnessData && items.length === 0 ? <HarnessEmptyState /> : null}
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <ListChecks className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Experiments &amp; work</h2>
+          <Pill>{items.length} total</Pill>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <HarnessFilterChip label="All" count={items.length} active={bucketFilter === "all"} onClick={() => setBucketFilter("all")} />
+          {HARNESS_BUCKETS.map((bucket) => (
+            <HarnessFilterChip
+              key={bucket}
+              label={HARNESS_BUCKET_LABEL[bucket]}
+              count={itemBucketCounts[bucket]}
+              tone={HARNESS_BUCKET_TONE[bucket]}
+              active={bucketFilter === bucket}
+              onClick={() => setBucketFilter((current) => (current === bucket ? "all" : bucket))}
+            />
+          ))}
+        </div>
+        {items.length === 0 ? (
+          <div className="border border-dashed border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">
+            No harness work items yet. Use Backfill to import harness issues.
+          </div>
+        ) : (
+          <ItemsTable items={visibleItems} />
+        )}
+      </section>
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">

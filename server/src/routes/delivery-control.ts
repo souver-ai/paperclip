@@ -278,6 +278,31 @@ export function deliveryControlRoutes(db: Db) {
     res.status(201).json(run);
   });
 
+  router.get("/companies/:companyId/harness-items", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await svc.listHarnessItems(companyId));
+  });
+
+  router.post("/companies/:companyId/harness-items/backfill-from-issues", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const actor = getActorInfo(req);
+    const result = await svc.backfillHarnessItemsFromIssues(companyId);
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "delivery.harness_items_backfilled",
+      entityType: "harness_item",
+      entityId: companyId,
+      details: { created: result.created, updated: result.updated, skipped: result.skipped },
+    });
+    res.status(201).json(result);
+  });
+
   router.get("/companies/:companyId/harness-findings", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);

@@ -152,6 +152,7 @@ export type {
   TestCaseBackfillSummary,
   HarnessRun,
   HarnessFinding,
+  HarnessItem,
   AgentThroughput,
   Feature,
   FeaturePriorityEvent,

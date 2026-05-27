@@ -6,6 +6,7 @@ import type {
   AutoMergeCandidate,
   Feature,
   HarnessFinding,
+  HarnessItem,
   HarnessRun,
   RepoLock,
   TestCase,
@@ -46,6 +47,10 @@ export const deliveryControlApi = {
   listHarnessRuns: (companyId: string) => api.get<HarnessRun[]>(`/companies/${companyId}/harness-runs`),
   createHarnessRun: (companyId: string, data: CreateHarnessRun) =>
     api.post<HarnessRun>(`/companies/${companyId}/harness-runs`, data),
+  listHarnessItems: (companyId: string) =>
+    api.get<HarnessItem[]>(`/companies/${companyId}/harness-items`),
+  backfillHarnessItemsFromIssues: (companyId: string) =>
+    api.post<{ created: number; updated: number; skipped: number; items: HarnessItem[] }>(`/companies/${companyId}/harness-items/backfill-from-issues`, {}),
   listHarnessFindings: (companyId: string) =>
     api.get<HarnessFinding[]>(`/companies/${companyId}/harness-findings`),
   createHarnessFinding: (companyId: string, data: CreateHarnessFinding) =>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAutoMergeCandidates, buildFeatureBackfillCandidates } from "./delivery-control.js";
+import { buildAutoMergeCandidates, buildFeatureBackfillCandidates, buildHarnessItemBackfillCandidates } from "./delivery-control.js";
 
 function issue(overrides: Record<string, unknown> = {}) {
   return {
@@ -336,6 +336,59 @@ describe("buildFeatureBackfillCandidates", () => {
       ] as any,
     );
 
+    expect(candidates).toHaveLength(0);
+  });
+});
+
+describe("buildHarnessItemBackfillCandidates", () => {
+  it("includes harness/benchmark issues across all statuses and tags benchmark + category", () => {
+    const candidates = buildHarnessItemBackfillCandidates(
+      [
+        issue({
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          status: "done",
+          deliveryState: "merged_verified",
+          identifier: "SOU-664",
+          title: "[Harness P1] Terminal-Bench 2.0 baseline Souver",
+          updatedAt: new Date("2026-05-26T03:00:00.000Z"),
+        }),
+        issue({
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          status: "cancelled",
+          deliveryState: "intake",
+          identifier: "SOU-700",
+          title: "[Benchmark][EXP-051] Lazy-schema replay gate",
+          updatedAt: new Date("2026-05-26T02:00:00.000Z"),
+        }),
+        // Non-harness issue must be excluded.
+        issue({
+          id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          status: "todo",
+          identifier: "SOU-42",
+          title: "[Desktop] Plan mode card",
+        }),
+      ],
+      [],
+    );
+
+    expect(candidates).toEqual([
+      expect.objectContaining({ itemId: "SOU-664", benchmark: "Terminal-Bench", category: "baseline", issueStatus: "done", deliveryState: "merged_verified" }),
+      expect.objectContaining({ itemId: "SOU-700", category: "experiment", issueStatus: "cancelled" }),
+    ]);
+  });
+
+  it("dedups items that already exist by root issue", () => {
+    const candidates = buildHarnessItemBackfillCandidates(
+      [
+        issue({
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          status: "done",
+          identifier: "SOU-664",
+          title: "[Harness P1] Terminal-Bench baseline",
+        }),
+      ],
+      [{ id: "1", itemId: "SOU-664", rootIssueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }] as any,
+    );
     expect(candidates).toHaveLength(0);
   });
 });

@@ -415,6 +415,40 @@ export type HarnessFindingSeverity = (typeof HARNESS_FINDING_SEVERITIES)[number]
 export const HARNESS_FINDING_STATUSES = ["open", "triaged", "converted_to_ticket", "waived", "resolved"] as const;
 export type HarnessFindingStatus = (typeof HARNESS_FINDING_STATUSES)[number];
 
+// Categories of harness work items (derived from the issue title at backfill time).
+export const HARNESS_ITEM_CATEGORIES = ["benchmark", "experiment", "baseline", "other"] as const;
+export type HarnessItemCategory = (typeof HARNESS_ITEM_CATEGORIES)[number];
+
+// Lifecycle buckets for the harness work registry. Derived from the source issue's status +
+// deliveryState + title, mirroring the Features buckets but with harness-relevant states
+// (in_progress / blocked instead of in_delivery).
+export const HARNESS_BUCKETS = [
+  "delivered",
+  "delivered_unmerged",
+  "done_noncode",
+  "in_progress",
+  "blocked",
+  "queued",
+  "abandoned",
+] as const;
+export type HarnessBucket = (typeof HARNESS_BUCKETS)[number];
+
+export function harnessBucket(
+  issueStatus: string,
+  deliveryState: DeliveryState | string,
+  title?: string | null,
+): HarnessBucket {
+  if (issueStatus === "cancelled") return "abandoned";
+  if (issueStatus === "done") {
+    if ((FEATURE_DELIVERED_DELIVERY_STATES as readonly string[]).includes(deliveryState)) return "delivered";
+    if (isNonCodeWork(title)) return "done_noncode";
+    return "delivered_unmerged";
+  }
+  if (issueStatus === "blocked" || deliveryState === "changes_requested") return "blocked";
+  if (issueStatus === "in_progress" || issueStatus === "in_review") return "in_progress";
+  return "queued";
+}
+
 export const MAX_ISSUE_REQUEST_DEPTH = 1024;
 
 export const ISSUE_COMMENT_AUTHOR_TYPES = ["user", "agent", "system"] as const;

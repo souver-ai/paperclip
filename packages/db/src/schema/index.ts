@@ -37,6 +37,7 @@ export { verificationRuns } from "./verification_runs.js";
 export { testCases } from "./test_cases.js";
 export { harnessRuns } from "./harness_runs.js";
 export { harnessFindings } from "./harness_findings.js";
+export { harnessItems } from "./harness_items.js";
 export { issueRecoveryActions } from "./issue_recovery_actions.js";
 export { issueReferenceMentions } from "./issue_reference_mentions.js";
 export { issueRelations } from "./issue_relations.js";

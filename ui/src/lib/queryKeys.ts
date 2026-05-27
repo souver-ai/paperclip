@@ -78,6 +78,7 @@ export const queryKeys = {
     verificationRuns: (companyId: string) => ["delivery-control", companyId, "verification-runs"] as const,
     testCases: (companyId: string) => ["delivery-control", companyId, "test-cases"] as const,
     harnessRuns: (companyId: string) => ["delivery-control", companyId, "harness-runs"] as const,
+    harnessItems: (companyId: string) => ["delivery-control", companyId, "harness-items"] as const,
     harnessFindings: (companyId: string) => ["delivery-control", companyId, "harness-findings"] as const,
   },
   routines: {

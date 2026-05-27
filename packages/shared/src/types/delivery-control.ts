@@ -6,6 +6,7 @@ import type {
   FeatureSourceTeam,
   HarnessFindingSeverity,
   HarnessFindingStatus,
+  HarnessItemCategory,
   HarnessRunStatus,
   IssueSurface,
   RepoLockState,
@@ -151,6 +152,22 @@ export interface HarnessFinding {
   evidence: Record<string, unknown>;
   antiRecurrencePatternId: string | null;
   nextAction: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface HarnessItem {
+  id: string;
+  companyId: string;
+  itemId: string;
+  title: string;
+  category: HarnessItemCategory;
+  benchmark: string | null;
+  issueStatus: string;
+  deliveryState: DeliveryState;
+  rootIssueId: string | null;
+  nextAction: string | null;
+  ownerAgentId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

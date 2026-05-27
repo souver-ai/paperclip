@@ -7,6 +7,7 @@ import {
   FEATURE_SOURCE_TEAMS,
   HARNESS_FINDING_SEVERITIES,
   HARNESS_FINDING_STATUSES,
+  HARNESS_ITEM_CATEGORIES,
   HARNESS_RUN_STATUSES,
   ISSUE_SURFACES,
   REPO_LOCK_STATES,
@@ -166,3 +167,21 @@ export type CreateHarnessFinding = z.infer<typeof createHarnessFindingSchema>;
 export const updateHarnessFindingSchema = createHarnessFindingSchema.partial();
 
 export type UpdateHarnessFinding = z.infer<typeof updateHarnessFindingSchema>;
+
+export const createHarnessItemSchema = z.object({
+  itemId: z.string().trim().min(1).max(160),
+  title: z.string().trim().min(1).max(500),
+  category: z.enum(HARNESS_ITEM_CATEGORIES).optional().default("experiment"),
+  benchmark: z.string().trim().min(1).max(240).optional().nullable(),
+  issueStatus: z.string().trim().min(1).max(40).optional().default("backlog"),
+  deliveryState: z.enum(DELIVERY_STATES).optional().default("intake"),
+  rootIssueId: z.string().uuid().optional().nullable(),
+  nextAction: z.string().trim().max(2000).optional().nullable(),
+  ownerAgentId: z.string().uuid().optional().nullable(),
+}).strict();
+
+export type CreateHarnessItem = z.infer<typeof createHarnessItemSchema>;
+
+export const updateHarnessItemSchema = createHarnessItemSchema.partial().omit({ itemId: true });
+
+export type UpdateHarnessItem = z.infer<typeof updateHarnessItemSchema>;

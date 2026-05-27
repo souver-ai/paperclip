@@ -164,6 +164,8 @@ export {
   createHarnessRunSchema,
   createHarnessFindingSchema,
   updateHarnessFindingSchema,
+  createHarnessItemSchema,
+  updateHarnessItemSchema,
   type UpsertRepoLock,
   type UpdateRepoLock,
   type CreateFeature,
@@ -173,6 +175,8 @@ export {
   type CreateHarnessRun,
   type CreateHarnessFinding,
   type UpdateHarnessFinding,
+  type CreateHarnessItem,
+  type UpdateHarnessItem,
 } from "./delivery-control.js";
 
 export {

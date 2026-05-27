@@ -7,6 +7,7 @@ import {
   featurePriorityEvents,
   features,
   harnessFindings,
+  harnessItems,
   harnessRuns,
   heartbeatRuns,
   issues,
@@ -18,6 +19,7 @@ import type {
   AutoMergeCandidate,
   CreateFeature,
   CreateHarnessFinding,
+  CreateHarnessItem,
   CreateHarnessRun,
   CreateVerificationRun,
   TestCase,
@@ -60,6 +62,79 @@ const AUTO_MERGE_SENSITIVE_TERMS = [
 type IssueRow = typeof issues.$inferSelect;
 type FeatureRow = typeof features.$inferSelect;
 type AgentRow = typeof agents.$inferSelect;
+type HarnessItemRow = typeof harnessItems.$inferSelect;
+
+// Title patterns that identify harness work items (tight scope: benchmark/experiment tags).
+const HARNESS_BACKFILL_PATTERNS: RegExp[] = [
+  /^\s*\[harness/i,
+  /^\s*\[benchmark/i,
+  /\bexp-0\d/i,
+  /terminal-bench/i,
+  /\bswe-bench\b/i,
+  /\bdeepswe\b/i,
+  /\bmcp-?mark\b/i,
+  /\bifbench\b/i,
+];
+
+function isHarnessBackfillIssue(issue: IssueRow): boolean {
+  if (issue.hiddenAt != null) return false;
+  const title = issue.title ?? "";
+  return HARNESS_BACKFILL_PATTERNS.some((pattern) => pattern.test(title));
+}
+
+function harnessBenchmarkFromIssue(issue: IssueRow): string | null {
+  const t = (issue.title ?? "").toLowerCase();
+  if (t.includes("terminal-bench")) return "Terminal-Bench";
+  if (t.includes("swe-bench")) return "SWE-bench";
+  if (t.includes("deepswe")) return "DeepSWE";
+  if (t.includes("mcp-mark") || t.includes("mcpmark")) return "MCP-Mark";
+  if (t.includes("ifbench")) return "IFBench";
+  const exp = (issue.title ?? "").match(/EXP-0\d+/i);
+  return exp ? exp[0].toUpperCase() : null;
+}
+
+function harnessCategoryFromIssue(issue: IssueRow): CreateHarnessItem["category"] {
+  const t = (issue.title ?? "").toLowerCase();
+  if (t.includes("baseline")) return "baseline";
+  if (/\bexp-0\d/i.test(issue.title ?? "") || t.includes("[benchmark")) return "experiment";
+  if (t.includes("[benchmark") || t.includes("bench")) return "benchmark";
+  return "experiment";
+}
+
+function harnessItemIdFromIssue(issue: IssueRow): string {
+  if (issue.identifier) return issue.identifier;
+  if (issue.issueNumber) return `ISSUE-${issue.issueNumber}`;
+  return `ISSUE-${issue.id.slice(0, 8)}`;
+}
+
+export function buildHarnessItemBackfillCandidates(
+  issueRows: IssueRow[],
+  existingItemRows: HarnessItemRow[],
+): CreateHarnessItem[] {
+  const existingRootIssueIds = new Set(existingItemRows.map((item) => item.rootIssueId).filter(Boolean));
+  const existingItemIds = new Set(existingItemRows.map((item) => item.itemId));
+
+  return issueRows
+    .filter((issue) => isHarnessBackfillIssue(issue))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .reduce<CreateHarnessItem[]>((candidates, issue) => {
+      const itemId = harnessItemIdFromIssue(issue);
+      if (existingRootIssueIds.has(issue.id) || existingItemIds.has(itemId)) return candidates;
+      candidates.push({
+        itemId,
+        title: issue.title,
+        category: harnessCategoryFromIssue(issue),
+        benchmark: harnessBenchmarkFromIssue(issue),
+        issueStatus: issue.status,
+        deliveryState: issue.deliveryState as CreateHarnessItem["deliveryState"],
+        rootIssueId: issue.id,
+        nextAction: issue.nextAction ?? null,
+        ownerAgentId: issue.assigneeAgentId,
+      });
+      existingItemIds.add(itemId);
+      return candidates;
+    }, []);
+}
 type RepoLockRow = typeof repoLocks.$inferSelect;
 type VerificationRunRow = typeof verificationRuns.$inferSelect;
 type TestCaseRow = typeof testCases.$inferSelect;
@@ -1277,6 +1352,64 @@ export function deliveryControlService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
+  function listHarnessItems(companyId: string) {
+    return db
+      .select()
+      .from(harnessItems)
+      .where(eq(harnessItems.companyId, companyId))
+      .orderBy(desc(harnessItems.updatedAt));
+  }
+
+  async function reconcileHarnessItemsFromIssues(
+    existingItemRows: HarnessItemRow[],
+    issuesById: Map<string, IssueRow>,
+  ): Promise<number> {
+    let updated = 0;
+    for (const item of existingItemRows) {
+      if (!item.rootIssueId) continue;
+      const issue = issuesById.get(item.rootIssueId);
+      if (!issue) continue;
+      if (item.issueStatus === issue.status && item.deliveryState === issue.deliveryState) continue;
+      await db
+        .update(harnessItems)
+        .set({ issueStatus: issue.status, deliveryState: issue.deliveryState, nextAction: issue.nextAction ?? item.nextAction, updatedAt: new Date() })
+        .where(eq(harnessItems.id, item.id));
+      updated += 1;
+    }
+    return updated;
+  }
+
+  async function backfillHarnessItemsFromIssues(companyId: string) {
+    const [issueRows, existingItemRows] = await Promise.all([
+      db
+        .select()
+        .from(issues)
+        .where(and(eq(issues.companyId, companyId), sql`${issues.hiddenAt} is null`)),
+      db.select().from(harnessItems).where(eq(harnessItems.companyId, companyId)),
+    ]);
+
+    const issuesById = new Map(issueRows.map((issue) => [issue.id, issue]));
+    const updated = await reconcileHarnessItemsFromIssues(existingItemRows, issuesById);
+
+    const candidates = buildHarnessItemBackfillCandidates(issueRows, existingItemRows);
+    if (candidates.length === 0) {
+      return { created: 0, updated, skipped: issueRows.length, items: [] };
+    }
+
+    const created = await db
+      .insert(harnessItems)
+      .values(candidates.map((candidate) => ({ companyId, ...candidate })))
+      .onConflictDoNothing({ target: [harnessItems.companyId, harnessItems.itemId] })
+      .returning();
+
+    return {
+      created: created.length,
+      updated,
+      skipped: issueRows.length - created.length,
+      items: created,
+    };
+  }
+
   function listHarnessFindings(companyId: string) {
     return db
       .select()
@@ -1347,6 +1480,8 @@ export function deliveryControlService(db: Db) {
     createVerificationRun,
     listHarnessRuns,
     createHarnessRun,
+    listHarnessItems,
+    backfillHarnessItemsFromIssues,
     listHarnessFindings,
     getHarnessFinding,
     createHarnessFinding,
