@@ -113,6 +113,11 @@ import {
 } from "../services/issue-execution-policy.js";
 import { parseIssueExecutionWorkspaceSettings } from "../services/execution-workspace-policy.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
+import {
+  buildDeliveryTransitionWakeup,
+  resolveDeliveryTransitionRoute,
+  type DeliveryTransitionRoute,
+} from "../services/delivery-transition-trigger.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -3267,6 +3272,35 @@ export function issueRoutes(
       };
     }
     Object.assign(updateFields, transition.patch);
+    let deliveryTransitionRoute: DeliveryTransitionRoute | null = null;
+    if (typeof updateFields.deliveryState === "string" && updateFields.deliveryState !== existing.deliveryState) {
+      let companyAgents: Awaited<ReturnType<typeof agentsSvc.list>> = [];
+      try {
+        companyAgents = await agentsSvc.list(existing.companyId);
+      } catch (err) {
+        logger.warn({ err, issueId: existing.id }, "failed to list agents for delivery transition trigger");
+      }
+      const nextBlockerType =
+        updateFields.blockerType === undefined ? existing.blockerType : (updateFields.blockerType as string | null);
+      const nextBenjaminRequired =
+        updateFields.benjaminRequired === undefined
+          ? existing.benjaminRequired
+          : (updateFields.benjaminRequired as boolean | null);
+      deliveryTransitionRoute = resolveDeliveryTransitionRoute({
+        previousIssue: existing,
+        nextDeliveryState: updateFields.deliveryState,
+        nextBlockerType,
+        nextBenjaminRequired,
+        agents: companyAgents,
+      });
+      if (
+        deliveryTransitionRoute?.targetAgentId &&
+        normalizedAssigneeAgentId === undefined &&
+        updateFields.assigneeAgentId === undefined
+      ) {
+        updateFields.assigneeAgentId = deliveryTransitionRoute.targetAgentId;
+      }
+    }
     const nextStatus = typeof updateFields.status === "string" ? updateFields.status : existing.status;
     const isDoneTransitionRequested = existing.status !== "done" && nextStatus === "done";
     if (isDoneTransitionRequested) {
@@ -3327,7 +3361,11 @@ export function issueRoutes(
       nextAssigneeUserId === existing.createdByUserId;
 
     if (assigneeWillChange && !transition.workflowControlledAssignment) {
-      if (!isAgentReturningIssueToCreator) {
+      const deliveryTransitionControlledAssignment =
+        Boolean(deliveryTransitionRoute?.targetAgentId) &&
+        nextAssigneeAgentId === deliveryTransitionRoute?.targetAgentId &&
+        normalizedAssigneeAgentId === undefined;
+      if (!isAgentReturningIssueToCreator && !deliveryTransitionControlledAssignment) {
         await assertCanAssignTasks(req, existing.companyId);
       }
     }
@@ -3546,6 +3584,29 @@ export function issueRoutes(
         ),
       },
     });
+
+    if (deliveryTransitionRoute) {
+      await logActivity(db, {
+        companyId: issue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: deliveryTransitionRoute.targetAgentId
+          ? "issue.delivery_transition_routed"
+          : "issue.delivery_transition_route_missing",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          identifier: issue.identifier,
+          fromDeliveryState: deliveryTransitionRoute.fromState,
+          toDeliveryState: deliveryTransitionRoute.toState,
+          targetAgentName: deliveryTransitionRoute.targetAgentName,
+          targetAgentId: deliveryTransitionRoute.targetAgentId,
+          wakeReason: deliveryTransitionRoute.wakeReason,
+        },
+      });
+    }
 
     if (existing.status === "in_progress" && issue.status !== existing.status && issue.status !== "in_progress") {
       await listSuccessfulRunHandoffStates(db, issue.companyId, [issue.id])
@@ -3850,6 +3911,18 @@ export function issueRoutes(
             ...(interruptedRunId ? { interruptedRunId } : {}),
           },
         });
+      }
+
+      if (deliveryTransitionRoute) {
+        const deliveryWakeup = buildDeliveryTransitionWakeup({
+          issue,
+          route: deliveryTransitionRoute,
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+        });
+        if (deliveryWakeup) {
+          addWakeup(deliveryWakeup.agentId, deliveryWakeup.wakeup);
+        }
       }
 
       if (
