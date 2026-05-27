@@ -91,10 +91,11 @@ export function resolveDeliveryTransitionRoute(input: {
   nextBlockerType?: string | null;
   nextBenjaminRequired?: boolean | null;
   agents: DeliveryTransitionAgent[];
+  allowCurrentState?: boolean;
 }): DeliveryTransitionRoute | null {
   const fromState = input.previousIssue.deliveryState;
   const toState = input.nextDeliveryState;
-  if (!toState || fromState === toState) return null;
+  if (!toState || (!input.allowCurrentState && fromState === toState)) return null;
   if (HUMAN_GATE_STATES.has(toState)) return null;
   if (input.nextBenjaminRequired === true || input.nextBlockerType === "approval_benjamin") return null;
 
