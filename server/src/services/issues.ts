@@ -4621,7 +4621,7 @@ export function issueService(db: Db) {
 
     checkout: async (id: string, agentId: string, expectedStatuses: string[], checkoutRunId: string | null) => {
       const issueCompany = await db
-        .select({ companyId: issues.companyId })
+        .select({ companyId: issues.companyId, status: issues.status })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
@@ -4646,9 +4646,18 @@ export function issueService(db: Db) {
       await clearExecutionRunIfTerminal(id);
 
       const dependencyReadiness = await listIssueDependencyReadinessMap(db, issueCompany.companyId, [id]);
-      const unresolvedBlockerIssueIds = dependencyReadiness.get(id)?.unresolvedBlockerIssueIds ?? [];
+      const issueReadiness = dependencyReadiness.get(id);
+      const blockerIssueIds = issueReadiness?.blockerIssueIds ?? [];
+      const unresolvedBlockerIssueIds = issueReadiness?.unresolvedBlockerIssueIds ?? [];
       if (unresolvedBlockerIssueIds.length > 0) {
         throw unprocessable("Issue is blocked by unresolved blockers", { unresolvedBlockerIssueIds });
+      }
+      if (issueCompany.status === "blocked" && blockerIssueIds.length === 0) {
+        throw unprocessable("Blocked issue checkout requires resolved native blockers", {
+          issueId: id,
+          status: issueCompany.status,
+          blockerIssueIds,
+        });
       }
 
       const sameRunAssigneeCondition = checkoutRunId

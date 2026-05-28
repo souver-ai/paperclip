@@ -39,6 +39,43 @@ function isPlainBinding(value: unknown): value is { type: "plain"; value: unknow
   return value.type === "plain" && "value" in value;
 }
 
+function redactEnvBindings(value: unknown): unknown {
+  if (!isPlainObject(value)) return REDACTED_EVENT_VALUE;
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, binding] of Object.entries(value)) {
+    redacted[key] = isSecretRefBinding(binding) ? binding : REDACTED_EVENT_VALUE;
+  }
+  return redacted;
+}
+
+function redactConfigValueForRead(value: unknown, key?: string): unknown {
+  if (key && key.toLowerCase() === "env") return redactEnvBindings(value);
+  if (Array.isArray(value)) return value.map((entry) => redactConfigValueForRead(entry));
+  if (!isPlainObject(value)) return value;
+
+  const eventRedacted = redactEventPayload(value) ?? {};
+  const redacted: Record<string, unknown> = {};
+  for (const [entryKey, entryValue] of Object.entries(eventRedacted)) {
+    redacted[entryKey] = redactConfigValueForRead(entryValue, entryKey);
+  }
+  return redacted;
+}
+
+function redactConfigFieldsInRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const redacted: Record<string, unknown> = { ...record };
+  if ("adapterConfig" in redacted) {
+    redacted.adapterConfig = redactConfigForRead(redacted.adapterConfig);
+  }
+  if ("runtimeConfig" in redacted) {
+    redacted.runtimeConfig = redactConfigForRead(redacted.runtimeConfig);
+  }
+  if (isPlainObject(redacted.requestedConfigurationSnapshot)) {
+    redacted.requestedConfigurationSnapshot = redactConfigFieldsInRecord(redacted.requestedConfigurationSnapshot);
+  }
+  return redacted;
+}
+
 function sanitizeCommandArgs(args: unknown[]): unknown[] {
   let redactNext = false;
   return args.map((arg) => {
@@ -91,6 +128,18 @@ export function redactEventPayload(payload: Record<string, unknown> | null): Rec
   if (!payload) return null;
   if (!isPlainObject(payload)) return payload;
   return sanitizeRecord(payload);
+}
+
+export function redactConfigForRead(value: unknown): Record<string, unknown> {
+  const redacted = redactConfigValueForRead(value);
+  return isPlainObject(redacted) ? redacted : {};
+}
+
+export function redactConfigFieldsForRead(
+  payload: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const redacted = redactEventPayload(payload);
+  return redacted ? redactConfigFieldsInRecord(redacted) : redacted;
 }
 
 export function redactSensitiveText(input: string): string {

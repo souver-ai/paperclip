@@ -101,6 +101,9 @@ export interface IssueDocumentSummary {
   createdByUserId: string | null;
   updatedByAgentId: string | null;
   updatedByUserId: string | null;
+  lockedAt: Date | null;
+  lockedByAgentId: string | null;
+  lockedByUserId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
