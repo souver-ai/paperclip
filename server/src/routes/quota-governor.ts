@@ -1,18 +1,29 @@
 import { Router } from "express";
-import { loadLatestQuotaGovernorSnapshot } from "../services/quota-governor.js";
-import { assertCompanyAccess } from "./authz.js";
+import type { Db } from "@paperclipai/db";
+import { quotaGovernorService } from "../services/quota-governor.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function quotaGovernorRoutes() {
+export function quotaGovernorRoutes(db: Db) {
   const router = Router();
+  const governor = quotaGovernorService(db);
 
-  // Read-only: surfaces the latest Paperclip quota-governor report snapshot.
-  // The report itself is produced by the ops/paperclip reporter on disk; this
-  // route never mutates cadences (that is SOU-1181 governor scope).
   router.get("/companies/:companyId/quota-governor", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const result = await loadLatestQuotaGovernorSnapshot();
+    const result = await governor.latest(companyId);
     res.json(result);
+  });
+
+  router.post("/companies/:companyId/quota-governor/snapshots", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const actor = getActorInfo(req);
+    const result = await governor.createSnapshot(companyId, {
+      actor: actor.actorId ?? actor.actorType,
+      source: "quota-governor-api",
+    });
+    res.status(201).json(result);
   });
 
   return router;

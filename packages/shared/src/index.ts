@@ -1213,5 +1213,15 @@ export type {
   EnvironmentProviderCapability,
   EnvironmentSupportStatus,
 } from "./environment-support.js";
-export type { QuotaGovernorBand, ForecastConfidence, QuotaGovernorCadenceEffect, QuotaGovernorDriver, QuotaGovernorSnapshot, QuotaGovernorLoadResult } from "./types/index.js";
+export type {
+  QuotaGovernorBand,
+  ForecastConfidence,
+  QuotaGovernorCadenceEffect,
+  QuotaGovernorDriver,
+  QuotaGovernorCadenceChange,
+  QuotaGovernorCadenceSnapshot,
+  QuotaGovernorForecast,
+  QuotaGovernorSnapshot,
+  QuotaGovernorLoadResult,
+} from "./types/index.js";
 export type { AutonomyBucketState, AutonomyPeriodKey, AutonomyKpis, AutonomyHeatmapCell, AutonomyAgentBreakdown, AutonomyIncident, AutonomyReport } from "./types/index.js";

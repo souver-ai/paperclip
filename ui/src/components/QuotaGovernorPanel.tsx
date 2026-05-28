@@ -56,10 +56,10 @@ export function QuotaGovernorPanel({ snapshot }: { snapshot: QuotaGovernorSnapsh
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Paperclip quota governor
             </p>
-            <h1 className="mt-1 text-2xl font-bold text-foreground">Cadence et quota mensuel</h1>
+            <h1 className="mt-1 text-2xl font-bold text-foreground">Codex weekly quota and cadence</h1>
             <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-              Source: {snapshot.quotaSource || "rapport quota governor"}. Dernier rapport:{" "}
-              {snapshot.generatedAt ?? "date inconnue"}.
+              Source: {snapshot.quotaSource || "native quota snapshot"}. Latest snapshot:{" "}
+              {snapshot.generatedAt ?? "unknown date"}.
             </p>
           </div>
           <span
@@ -91,7 +91,7 @@ export function QuotaGovernorPanel({ snapshot }: { snapshot: QuotaGovernorSnapsh
         <MetricCard
           label="Confiance forecast"
           value={confidenceLabel(snapshot.confidence)}
-          hint={`Cible ${formatPercent(snapshot.targetUtilization)} +/- ${formatPercent(snapshot.safetyBand)}`}
+          hint={`Threshold ${formatPercent(snapshot.targetUtilization)}; reset ${snapshot.resetAt ? formatDate(snapshot.resetAt) : "unknown"}`}
         />
       </section>
 
@@ -177,9 +177,49 @@ export function QuotaGovernorPanel({ snapshot }: { snapshot: QuotaGovernorSnapsh
         </div>
       </section>
 
+      <section className="rounded-lg border border-border bg-card">
+        <div className="border-b border-border px-5 py-3">
+          <h2 className="text-sm font-semibold text-foreground">Cadence diff</h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-4 py-3 font-medium">Target</th>
+                <th className="px-4 py-3 font-medium">Field</th>
+                <th className="px-4 py-3 font-medium">Previous</th>
+                <th className="px-4 py-3 font-medium">Next</th>
+                <th className="px-4 py-3 font-medium">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(snapshot.cadenceChanges ?? []).length === 0 ? (
+                <tr>
+                  <td className="px-4 py-5 text-muted-foreground" colSpan={5}>
+                    No cadence changes proposed for this snapshot.
+                  </td>
+                </tr>
+              ) : (
+                (snapshot.cadenceChanges ?? []).map((change) => (
+                  <tr key={`${change.targetType}-${change.targetId}-${change.field}`} className="border-t border-border">
+                    <td className="px-4 py-3 font-medium text-foreground">{change.targetName}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{change.field}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{String(change.previousValue)}</td>
+                    <td className="px-4 py-3 text-foreground">{String(change.nextValue)}</td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {change.applied ? "applied" : "proposed"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <p className="text-xs text-muted-foreground/70">
-        Rapport source: {snapshot.reportPath}. Les valeurs proviennent du governor Paperclip/Hermes,
-        pas de donnees client.
+        Snapshot source: {snapshot.reportPath}. Cadence data comes from native agent heartbeat config
+        and routine triggers; no customer data is read.
       </p>
     </div>
   );
@@ -238,4 +278,13 @@ function confidenceLabel(confidence: QuotaGovernorSnapshot["confidence"]): strin
   if (confidence === "high") return "Haute";
   if (confidence === "medium") return "Moyenne";
   return "Basse";
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }

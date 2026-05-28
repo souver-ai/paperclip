@@ -212,7 +212,7 @@ export async function createApp(
   api.use(dashboardRoutes(db));
   api.use(userProfileRoutes(db));
   api.use(sidebarBadgeRoutes(db));
-  api.use(quotaGovernorRoutes());
+  api.use(quotaGovernorRoutes(db));
   api.use(autonomyRoutes(db));
   api.use(sidebarPreferenceRoutes(db));
   api.use(inboxDismissalRoutes(db));
