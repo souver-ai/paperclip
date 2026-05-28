@@ -126,9 +126,9 @@ export function Sidebar() {
           ) : null}
         </SidebarSection>
 
-        <SidebarProjects />
-
         <SidebarAgents />
+
+        <SidebarProjects />
 
         <SidebarSection label="Company">
           <SidebarNavItem to="/org" label="Org" icon={Network} />

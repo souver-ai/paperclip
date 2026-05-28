@@ -79,11 +79,11 @@ vi.mock("./SidebarCompanyMenu", () => ({
 }));
 
 vi.mock("./SidebarProjects", () => ({
-  SidebarProjects: () => null,
+  SidebarProjects: () => <div data-testid="sidebar-projects">Projects section</div>,
 }));
 
 vi.mock("./SidebarAgents", () => ({
-  SidebarAgents: () => null,
+  SidebarAgents: () => <div data-testid="sidebar-agents">Agents section</div>,
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -139,6 +139,20 @@ describe("Sidebar", () => {
     expect(topSearchLink?.getAttribute("href")).toBe("/search");
     const workLinks = [...container.querySelectorAll("nav a")].map((anchor) => anchor.textContent?.trim());
     expect(workLinks).not.toContain("Search");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("renders the Agents section before the Projects section", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    const root = await renderSidebar();
+
+    const sections = [...container.querySelectorAll("[data-testid='sidebar-agents'], [data-testid='sidebar-projects']")].map(
+      (node) => node.getAttribute("data-testid"),
+    );
+    expect(sections).toEqual(["sidebar-agents", "sidebar-projects"]);
 
     await act(async () => {
       root.unmount();
