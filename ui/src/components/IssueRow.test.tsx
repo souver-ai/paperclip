@@ -203,6 +203,30 @@ describe("IssueRow", () => {
     });
   });
 
+  it("keeps taxonomy chips outside the truncated title text", () => {
+    const root = createRoot(container);
+    const issue = createIssue({
+      title: "Very long issue title that should not hide the taxonomy chips in the blocked inbox row",
+      category: "feature",
+      surfaces: ["paperclip"],
+    });
+
+    act(() => {
+      root.render(<IssueRow issue={issue} />);
+    });
+
+    const titleText = container.querySelector('[data-testid="issue-row-title-text"]');
+    expect(titleText?.textContent).toContain("Very long issue title");
+    expect(titleText?.textContent).not.toContain("Feature");
+    expect(titleText?.textContent).not.toContain("Paperclip");
+    expect(container.querySelector('span[title="Category: Feature"]')?.textContent).toBe("Feature");
+    expect(container.querySelector('span[title="Surface: Paperclip"]')?.textContent).toBe("Paperclip");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("renders checklist step numbers beside the issue identifier", () => {
     const root = createRoot(container);
 
