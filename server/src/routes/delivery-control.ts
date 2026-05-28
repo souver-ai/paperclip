@@ -13,11 +13,20 @@ import {
 } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
-import { deliveryControlService, logActivity } from "../services/index.js";
+import { deliveryControlService, githubPrService, logActivity } from "../services/index.js";
 
 export function deliveryControlRoutes(db: Db) {
   const router = Router();
   const svc = deliveryControlService(db);
+  const prSvc = githubPrService(db);
+
+  // Cached GitHub PR activity (lazy-synced on read). Source of truth for the
+  // Control Tower PR flow KPIs.
+  router.get("/companies/:companyId/pull-requests", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await prSvc.getActivity(companyId));
+  });
 
   router.get("/companies/:companyId/repo-locks", async (req, res) => {
     const companyId = req.params.companyId as string;

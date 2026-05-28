@@ -159,6 +159,10 @@ export type {
   AutoMergeCandidate,
   ImplementationSlotState,
   VerificationTailState,
+  PullRequestSnapshot,
+  PullRequestRepoSyncResult,
+  PullRequestActivity,
+  PullRequestSyncStatus,
 } from "./delivery-control.js";
 
 export type {

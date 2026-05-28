@@ -525,6 +525,14 @@ export function ControlTower() {
     queryFn: () => deliveryControlApi.listHarnessFindings(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  // GitHub PR activity is lazy-synced server-side; refetch periodically so the
+  // PR KPIs stay current while the dashboard is open.
+  const pullRequestsQuery = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.deliveryControl.pullRequests(selectedCompanyId) : ["delivery-control", "pull-requests", "__disabled__"],
+    queryFn: () => deliveryControlApi.getPullRequestActivity(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+    refetchInterval: 5 * 60 * 1000,
+  });
   const isLoading =
     repoLocksQuery.isLoading ||
     agentThroughputQuery.isLoading ||
@@ -552,6 +560,7 @@ export function ControlTower() {
   const features = featuresQuery.data ?? [];
   const testCases = testCasesQuery.data ?? [];
   const harnessFindings = harnessFindingsQuery.data ?? [];
+  const pullRequests = pullRequestsQuery.data?.pullRequests ?? [];
 
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const issuesById = useMemo(() => new Map(issues.map((issue) => [issue.id, issue])), [issues]);
@@ -561,8 +570,8 @@ export function ControlTower() {
   );
 
   const pulseData: ControlTowerData = useMemo(
-    () => ({ issues, testCases, features, harnessFindings, autoMergeCandidates, repoLocks, verificationRuns }),
-    [issues, testCases, features, harnessFindings, autoMergeCandidates, repoLocks, verificationRuns],
+    () => ({ issues, testCases, features, harnessFindings, autoMergeCandidates, repoLocks, verificationRuns, pullRequests }),
+    [issues, testCases, features, harnessFindings, autoMergeCandidates, repoLocks, verificationRuns, pullRequests],
   );
   const { kpis, sourceHealth, attention } = useMemo(() => {
     const now = Date.now();

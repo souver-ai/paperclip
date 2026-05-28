@@ -19,6 +19,7 @@ function emptyData(): ControlTowerData {
     autoMergeCandidates: [],
     repoLocks: [],
     verificationRuns: [],
+    pullRequests: [],
   };
 }
 
@@ -76,14 +77,26 @@ describe("computePulse", () => {
     expect(unknownKpi.health.state).toBe("empty");
   });
 
-  it("marks PR merged as a proxy KPI", () => {
+  it("counts merged PRs from GitHub merge events within the window", () => {
     const data = emptyData();
-    data.issues = [
-      { deliveryState: "merged_verified", updatedAt: new Date(NOW - 2 * DAY), status: "done" },
-    ] as unknown as ControlTowerData["issues"];
-    const merged = computePulse(data, "7d", NOW).find((k) => k.key === "prs-merged")!;
+    data.pullRequests = [
+      { state: "closed", isMerged: true, ghMergedAt: new Date(NOW - 2 * DAY), lastSyncedAt: new Date(NOW - 60_000) },
+      { state: "closed", isMerged: true, ghMergedAt: new Date(NOW - 9 * DAY), lastSyncedAt: new Date(NOW - 60_000) },
+      { state: "open", isMerged: false, ghMergedAt: null, lastSyncedAt: new Date(NOW - 60_000) },
+    ] as unknown as ControlTowerData["pullRequests"];
+    const pulse = computePulse(data, "7d", NOW);
+    const merged = pulse.find((k) => k.key === "prs-merged")!;
     expect(merged.value).toBe(1);
-    expect(merged.confidence).toBe("proxy");
+    expect(merged.previous).toBe(1);
+    expect(merged.confidence).toBe("measured");
+    const open = pulse.find((k) => k.key === "prs-open")!;
+    expect(open.value).toBe(1);
+    expect(open.health.state).toBe("ok");
+  });
+
+  it("shows PR KPIs as unknown when no GitHub sync has populated data", () => {
+    const open = computePulse(emptyData(), "7d", NOW).find((k) => k.key === "prs-open")!;
+    expect(open.health.state).toBe("empty");
   });
 });
 

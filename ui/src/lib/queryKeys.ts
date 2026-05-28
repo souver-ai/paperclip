@@ -80,6 +80,7 @@ export const queryKeys = {
     harnessRuns: (companyId: string) => ["delivery-control", companyId, "harness-runs"] as const,
     harnessItems: (companyId: string) => ["delivery-control", companyId, "harness-items"] as const,
     harnessFindings: (companyId: string) => ["delivery-control", companyId, "harness-findings"] as const,
+    pullRequests: (companyId: string) => ["delivery-control", companyId, "pull-requests"] as const,
   },
   routines: {
     list: (companyId: string, filters?: { projectId?: string | null }) =>

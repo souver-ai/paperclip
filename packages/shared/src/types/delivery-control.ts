@@ -231,6 +231,46 @@ export interface FeaturePriorityEvent {
   createdAt: Date;
 }
 
+export type PullRequestSyncStatus = "idle" | "syncing" | "ok" | "error";
+
+export interface PullRequestSnapshot {
+  id: string;
+  companyId: string;
+  repoSlug: string;
+  prNumber: number;
+  prUrl: string;
+  title: string;
+  state: "open" | "closed";
+  isDraft: boolean;
+  isMerged: boolean;
+  headBranch: string | null;
+  baseBranch: string | null;
+  author: string | null;
+  ghCreatedAt: Date;
+  ghUpdatedAt: Date;
+  ghClosedAt: Date | null;
+  ghMergedAt: Date | null;
+  lastSyncedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PullRequestRepoSyncResult {
+  slug: string;
+  ok: boolean;
+  count: number;
+  error?: string;
+}
+
+/** Response of GET /companies/:id/pull-requests (cached PRs + sync metadata). */
+export interface PullRequestActivity {
+  pullRequests: PullRequestSnapshot[];
+  status: PullRequestSyncStatus;
+  syncedAt: Date | null;
+  repos: PullRequestRepoSyncResult[];
+  error: string | null;
+}
+
 export interface AutoMergeCandidate {
   issueId: string;
   identifier: string | null;

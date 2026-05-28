@@ -8,6 +8,7 @@ import type {
   HarnessFinding,
   HarnessItem,
   HarnessRun,
+  PullRequestActivity,
   RepoLock,
   TestCase,
   TestCaseBackfillSummary,
@@ -36,6 +37,8 @@ export const deliveryControlApi = {
   updateRepoLock: (id: string, data: UpdateRepoLock) => api.patch<RepoLock>(`/repo-locks/${id}`, data),
   listVerificationRuns: (companyId: string) =>
     api.get<VerificationRun[]>(`/companies/${companyId}/verification-runs`),
+  getPullRequestActivity: (companyId: string) =>
+    api.get<PullRequestActivity>(`/companies/${companyId}/pull-requests`),
   createVerificationRun: (companyId: string, data: CreateVerificationRun) =>
     api.post<VerificationRun>(`/companies/${companyId}/verification-runs`, data),
   listTestCases: (companyId: string) =>

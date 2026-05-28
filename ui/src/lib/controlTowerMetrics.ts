@@ -5,6 +5,7 @@ import {
   type Feature,
   type HarnessFinding,
   type Issue,
+  type PullRequestSnapshot,
   type RepoLock,
   type TestCase,
   type VerificationRun,
@@ -117,12 +118,6 @@ export interface Kpi {
 }
 
 const DELIVERED_STATES = new Set<string>(FEATURE_DELIVERED_DELIVERY_STATES);
-const PR_OPEN_STATES = new Set<string>([
-  "pr_ready",
-  "in_review",
-  "changes_requested",
-  "merge_ready",
-]);
 
 function isOpenIssue(issue: Issue): boolean {
   return issue.status !== "done" && issue.status !== "cancelled" && (issue as { hiddenAt?: unknown }).hiddenAt == null;
@@ -168,6 +163,8 @@ export interface ControlTowerData {
   autoMergeCandidates: AutoMergeCandidate[];
   repoLocks: RepoLock[];
   verificationRuns: VerificationRun[];
+  /** GitHub PR snapshots (lazy-synced). Empty until the first sync runs. */
+  pullRequests: PullRequestSnapshot[];
 }
 
 /**
@@ -197,46 +194,41 @@ export function computePulse(data: ControlTowerData, window: WindowKey, now: num
     trend: trendBuckets(testTimestamps, windowStart, now, buckets),
   };
 
-  // 2. PRs in flight — snapshot of open issues in a PR delivery state.
-  const openPrIssues = data.issues.filter(
-    (i) => isOpenIssue(i) && i.deliveryState != null && PR_OPEN_STATES.has(i.deliveryState),
-  );
+  // GitHub PR freshness drives the health for all PR KPIs.
+  const prSyncTimestamps = data.pullRequests.map((p) => p.lastSyncedAt);
+  const prHealth = dataHealth(prSyncTimestamps, now, 2 * DAY_MS);
+
+  // 2. PRs in flight — open PRs from the synced GitHub snapshot.
+  const openPrs = data.pullRequests.filter((p) => p.state === "open");
   const prsOpen: Kpi = {
     key: "prs-open",
     label: "PR en cours",
-    value: openPrIssues.length,
+    value: openPrs.length,
     previous: null,
     mode: "snapshot",
-    confidence: "proxy",
-    health: dataHealth(
-      data.issues.map((i) => i.updatedAt),
-      now,
-      2 * DAY_MS,
-    ),
+    confidence: "measured",
+    health: prHealth,
     href: "#repos",
-    producer: "CTO · GitHub sync (P1)",
+    producer: "GitHub sync",
     trend: [],
-    note: "Source: état de livraison Paperclip — vérité GitHub en P1.",
+    note: "PR ouvertes sur GitHub",
   };
 
-  // 3. PRs merged — proxy: issues that reached a merged delivery state, stamped
-  // into the window by updatedAt. Replaced by GitHub merge events in P1.
-  const mergedIssues = data.issues.filter(
-    (i) => i.deliveryState != null && DELIVERED_STATES.has(i.deliveryState),
-  );
-  const mergedTimestamps = mergedIssues.map((i) => i.updatedAt);
+  // 3. PRs merged — real GitHub merge events windowed by merged_at.
+  const mergedTimestamps = data.pullRequests
+    .filter((p) => p.isMerged)
+    .map((p) => p.ghMergedAt);
   const prsMerged: Kpi = {
     key: "prs-merged",
     label: "PR mergées",
     value: countInWindow(mergedTimestamps, windowStart, now),
     previous: countInWindow(mergedTimestamps, prevStart, windowStart),
     mode: "window",
-    confidence: "proxy",
-    health: dataHealth(mergedTimestamps, now, 7 * DAY_MS),
+    confidence: "measured",
+    health: prHealth,
     href: "/features",
-    producer: "Delivery gate · GitHub sync (P1)",
+    producer: "GitHub sync",
     trend: trendBuckets(mergedTimestamps, windowStart, now, buckets),
-    note: "Fenêtré sur la dernière transition — vérité GitHub en P1.",
   };
 
   // 4. PRs awaiting merge — snapshot of candidates ready but not yet merged.
@@ -361,9 +353,9 @@ export function computeSourceHealth(data: ControlTowerData, now: number): Source
     {
       key: "repos",
       label: "Repos / PRs",
-      producer: "CTO · GitHub sync",
+      producer: "GitHub sync",
       health: dataHealth(
-        data.repoLocks.map((l) => l.updatedAt),
+        data.pullRequests.map((p) => p.lastSyncedAt),
         now,
         2 * DAY_MS,
       ),
