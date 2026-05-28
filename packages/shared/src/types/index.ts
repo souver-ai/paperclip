@@ -438,5 +438,15 @@ export type {
   PluginDatabaseNamespaceMode,
   PluginDatabaseNamespaceStatus,
 } from "./plugin.js";
-export type { QuotaGovernorBand, ForecastConfidence, QuotaGovernorCadenceEffect, QuotaGovernorDriver, QuotaGovernorSnapshot, QuotaGovernorLoadResult } from "./quota-governor.js";
+export type {
+  QuotaGovernorBand,
+  ForecastConfidence,
+  QuotaGovernorCadenceEffect,
+  QuotaGovernorDriver,
+  QuotaGovernorCadenceChange,
+  QuotaGovernorCadenceSnapshot,
+  QuotaGovernorForecast,
+  QuotaGovernorSnapshot,
+  QuotaGovernorLoadResult,
+} from "./quota-governor.js";
 export type { AutonomyBucketState, AutonomyPeriodKey, AutonomyKpis, AutonomyHeatmapCell, AutonomyAgentBreakdown, AutonomyIncident, AutonomyReport } from "./autonomy.js";

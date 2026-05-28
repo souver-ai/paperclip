@@ -66,6 +66,7 @@ export { heartbeatRunEvents } from "./heartbeat_run_events.js";
 export { heartbeatRunWatchdogDecisions } from "./heartbeat_run_watchdog_decisions.js";
 export { costEvents } from "./cost_events.js";
 export { financeEvents } from "./finance_events.js";
+export { quotaGovernorSnapshots } from "./quota_governor_snapshots.js";
 export { approvals } from "./approvals.js";
 export { approvalComments } from "./approval_comments.js";
 export { activityLog } from "./activity_log.js";

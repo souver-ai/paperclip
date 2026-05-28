@@ -3,8 +3,11 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  decideQuotaGovernorAction,
   loadLatestQuotaGovernorSnapshot,
   parseQuotaGovernorReport,
+  projectUsagePercent,
+  selectCodexWeeklyWindow,
 } from "./quota-governor.js";
 
 function buildReport(opts: {
@@ -153,5 +156,36 @@ describe("loadLatestQuotaGovernorSnapshot", () => {
     const result = await loadLatestQuotaGovernorSnapshot(tmpDir);
     expect(result.snapshot?.reportPath.endsWith("2026-05-26-quota-governor.md")).toBe(true);
     expect(result.snapshot?.band).toBe("over_target");
+  });
+});
+
+describe("native quota governor forecast helpers", () => {
+  it("selects the Codex weekly quota window from live provider results", () => {
+    const window = selectCodexWeeklyWindow({
+      provider: "openai",
+      ok: true,
+      source: "codex-app-server",
+      windows: [
+        { label: "5hlimit", usedPercent: 20, resetsAt: "2026-05-28T12:00:00.000Z", valueLabel: null },
+        { label: "weeklylimit", usedPercent: 72, resetsAt: "2026-06-01T00:00:00.000Z", valueLabel: null },
+      ],
+    });
+
+    expect(window?.label).toBe("weeklylimit");
+    expect(window?.usedPercent).toBe(72);
+  });
+
+  it("projects end-of-window usage from provider percentage and elapsed time", () => {
+    expect(projectUsagePercent({
+      providerUsedPercent: 45,
+      elapsedDays: 3,
+      remainingDays: 4,
+    })).toBe(105);
+  });
+
+  it("holds low-confidence forecasts and slows down high-confidence overages", () => {
+    expect(decideQuotaGovernorAction(120, "low")).toBe("hold");
+    expect(decideQuotaGovernorAction(120, "high")).toBe("slow_down");
+    expect(decideQuotaGovernorAction(60, "high")).toBe("speed_up");
   });
 });
