@@ -61,6 +61,7 @@ import {
 import { IssueFiltersPopover } from "../components/IssueFiltersPopover";
 import { IssueRow } from "../components/IssueRow";
 import { BlockedInboxView } from "../components/BlockedInboxView";
+import { useBlockedInboxRows } from "../hooks/useBlockedInboxRows";
 import { SwipeToArchive } from "../components/SwipeToArchive";
 
 import { StatusIcon } from "../components/StatusIcon";
@@ -1280,6 +1281,23 @@ export function Inbox() {
     () => groupedSections.reduce((count, group) => count + group.displayItems.length, 0),
     [groupedSections],
   );
+  // Blocked tab count. Shares the BlockedInboxView query (same key) so the badge
+  // stays in sync with the rows rendered there and adds no extra network request.
+  const { count: blockedCount } = useBlockedInboxRows({
+    companyId: selectedCompanyId ?? "",
+    searchQuery,
+    issueFilters,
+    currentUserId,
+    liveIssueIds,
+    workspaceFilterContext: inboxWorkspaceGrouping,
+    enabled: Boolean(selectedCompanyId),
+  });
+  const renderTabCount = (count: number) =>
+    count > 0 ? (
+      <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
+        {count}
+      </span>
+    ) : null;
   const toggleInboxParentCollapse = useCallback((parentId: string) => {
     setCollapsedInboxParents((prev) => {
       const next = new Set(prev);
@@ -1954,15 +1972,15 @@ export function Inbox() {
             items={[
               {
                 value: "mine",
-                label: "Mine",
+                label: <>Mine{renderTabCount(visibleMineIssues.length)}</>,
               },
               {
                 value: "recent",
-                label: "Recent",
+                label: <>Recent{renderTabCount(visibleTouchedIssues.length)}</>,
               },
-              { value: "unread", label: "Unread" },
-              { value: "blocked", label: "Blocked" },
-              { value: "all", label: "All" },
+              { value: "unread", label: <>Unread{renderTabCount(unreadTouchedIssues.length)}</> },
+              { value: "blocked", label: <>Blocked{renderTabCount(blockedCount)}</> },
+              { value: "all", label: <>All{renderTabCount(totalVisibleWorkItems)}</> },
             ]}
           />
         </Tabs>

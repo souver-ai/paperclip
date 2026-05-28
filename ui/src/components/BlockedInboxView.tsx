@@ -1,14 +1,9 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
-import type { Issue } from "@paperclipai/shared";
-import { issuesApi } from "../api/issues";
-import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
-import { applyIssueFilters, type IssueFilterState, type IssueFilterWorkspaceContext } from "../lib/issue-filters";
+import { type IssueFilterState, type IssueFilterWorkspaceContext } from "../lib/issue-filters";
+import { useBlockedInboxRows } from "../hooks/useBlockedInboxRows";
 import {
-  blockedRowMatchesSearch,
-  buildBlockedInboxRows,
   formatStoppedAge,
   groupBlockedInboxRows,
   sortBlockedInboxRows,
@@ -40,8 +35,6 @@ interface BlockedInboxViewProps {
   showUpdatedColumn: boolean;
 }
 
-const BLOCKED_LIST_LIMIT = 200;
-
 export function BlockedInboxView({
   companyId,
   searchQuery,
@@ -61,40 +54,21 @@ export function BlockedInboxView({
   const [collapsedVariants, setCollapsedVariants] = useState<Set<string>>(() => new Set());
 
   const {
-    data: issues = [] as Issue[],
+    allRows,
+    issueFilteredRows,
     isLoading,
     isFetching,
     error,
     refetch,
-  } = useQuery({
-    queryKey: queryKeys.issues.listBlockedAttention(companyId),
-    queryFn: () =>
-      issuesApi.list(companyId, {
-        attention: "blocked",
-        includeBlockedInboxAttention: true,
-        includeBlockedBy: true,
-        limit: BLOCKED_LIST_LIMIT,
-      }),
+  } = useBlockedInboxRows({
+    companyId,
+    searchQuery,
+    issueFilters,
+    currentUserId,
+    liveIssueIds,
+    workspaceFilterContext,
   });
 
-  const allRows = useMemo(() => buildBlockedInboxRows(issues), [issues]);
-  const filteredRows = useMemo(
-    () => allRows.filter((row) => blockedRowMatchesSearch(row, searchQuery)),
-    [allRows, searchQuery],
-  );
-  const issueFilteredRows = useMemo(() => {
-    const visibleIssueIds = new Set(
-      applyIssueFilters(
-        filteredRows.map((row) => row.issue),
-        issueFilters,
-        currentUserId,
-        true,
-        liveIssueIds,
-        workspaceFilterContext,
-      ).map((issue) => issue.id),
-    );
-    return filteredRows.filter((row) => visibleIssueIds.has(row.issue.id));
-  }, [currentUserId, filteredRows, issueFilters, liveIssueIds, workspaceFilterContext]);
   const sortedRows = useMemo(() => sortBlockedInboxRows(issueFilteredRows, sortBy), [issueFilteredRows, sortBy]);
   const groups = useMemo(
     () => groupBlockedInboxRows(issueFilteredRows, sortBy),
