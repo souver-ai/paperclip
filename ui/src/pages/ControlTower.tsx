@@ -1,11 +1,10 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Activity,
   CheckCircle2,
-  CircleDot,
   GitMerge,
   GitPullRequest,
   RadioTower,
@@ -30,6 +29,14 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime, issueUrl, relativeTime } from "../lib/utils";
+import { AttentionQueue, PulseStrip, SourceHealthRow, WindowToggle } from "../components/ControlTowerPulse";
+import {
+  computeAttentionQueue,
+  computePulse,
+  computeSourceHealth,
+  type ControlTowerData,
+  type WindowKey,
+} from "../lib/controlTowerMetrics";
 
 type PanelTone = "default" | "success" | "warning" | "danger";
 
@@ -71,30 +78,6 @@ function MiniPill({ children, tone = "default" }: { children: ReactNode; tone?: 
     <span className={cn("inline-flex h-6 items-center rounded-full border px-2 text-xs font-medium", toneClasses(tone))}>
       {children}
     </span>
-  );
-}
-
-function TowerMetric({
-  label,
-  value,
-  icon: Icon,
-  tone = "default",
-}: {
-  label: string;
-  value: number | string;
-  icon: LucideIcon;
-  tone?: PanelTone;
-}) {
-  return (
-    <div className="min-w-0 border border-border bg-card px-4 py-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="h-4 w-4 shrink-0" />
-        <span className="truncate">{label}</span>
-      </div>
-      <div className={cn("mt-2 text-2xl font-semibold tabular-nums", tone === "danger" && "text-red-600 dark:text-red-300", tone === "warning" && "text-amber-600 dark:text-amber-300", tone === "success" && "text-emerald-600 dark:text-emerald-300")}>
-        {value}
-      </div>
-    </div>
   );
 }
 
@@ -525,6 +508,23 @@ export function ControlTower() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  // Flow sources for the Delivery Pulse strip. These power the windowed KPIs
+  // (new tests, features delivered, harness hypotheses) and source-health row.
+  const featuresQuery = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.deliveryControl.features(selectedCompanyId) : ["delivery-control", "features", "__disabled__"],
+    queryFn: () => deliveryControlApi.listFeatures(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const testCasesQuery = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.deliveryControl.testCases(selectedCompanyId) : ["delivery-control", "test-cases", "__disabled__"],
+    queryFn: () => deliveryControlApi.listTestCases(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const harnessFindingsQuery = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.deliveryControl.harnessFindings(selectedCompanyId) : ["delivery-control", "harness-findings", "__disabled__"],
+    queryFn: () => deliveryControlApi.listHarnessFindings(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
   const isLoading =
     repoLocksQuery.isLoading ||
     agentThroughputQuery.isLoading ||
@@ -541,12 +541,17 @@ export function ControlTower() {
     issuesQuery.error ||
     agentsQuery.error;
 
+  const [windowKey, setWindowKey] = useState<WindowKey>("7d");
+
   const repoLocks = repoLocksQuery.data ?? [];
   const agentThroughput = agentThroughputQuery.data ?? [];
   const autoMergeCandidates = autoMergeCandidatesQuery.data ?? [];
   const verificationRuns = verificationRunsQuery.data ?? [];
   const issues = issuesQuery.data ?? [];
   const agents = agentsQuery.data ?? [];
+  const features = featuresQuery.data ?? [];
+  const testCases = testCasesQuery.data ?? [];
+  const harnessFindings = harnessFindingsQuery.data ?? [];
 
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const issuesById = useMemo(() => new Map(issues.map((issue) => [issue.id, issue])), [issues]);
@@ -554,9 +559,20 @@ export function ControlTower() {
     () => issues.filter((issue) => issue.benjaminRequired && isOpenIssue(issue)).sort(sortByUpdatedDesc),
     [issues],
   );
-  const lockedRepos = repoLocks.filter((lock) => lock.state !== "free").length;
-  const failedEvidence = verificationRuns.filter((run) => run.status === "fail" || run.status === "blocked").length;
-  const eligibleAutoMergeCandidates = autoMergeCandidates.filter((candidate) => candidate.eligible).length;
+
+  const pulseData: ControlTowerData = useMemo(
+    () => ({ issues, testCases, features, harnessFindings, autoMergeCandidates, repoLocks, verificationRuns }),
+    [issues, testCases, features, harnessFindings, autoMergeCandidates, repoLocks, verificationRuns],
+  );
+  const { kpis, sourceHealth, attention } = useMemo(() => {
+    const now = Date.now();
+    const sh = computeSourceHealth(pulseData, now);
+    return {
+      kpis: computePulse(pulseData, windowKey, now),
+      sourceHealth: sh,
+      attention: computeAttentionQueue(pulseData, sh),
+    };
+  }, [pulseData, windowKey]);
 
   if (!selectedCompanyId) {
     return companies.length === 0
@@ -571,38 +587,51 @@ export function ControlTower() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal">Control Tower</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Delivery gates, evidence, and attention routing.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Activité de livraison, attention à router, santé des sources.</p>
         </div>
-        {error ? (
-          <div className="flex items-center gap-2 border border-red-500/40 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            <span>Control Tower data failed to load.</span>
-          </div>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {error ? (
+            <div className="flex items-center gap-2 border border-red-500/40 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>Une partie des données n'a pas pu être chargée.</span>
+            </div>
+          ) : null}
+          <WindowToggle value={windowKey} onChange={setWindowKey} />
+        </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <TowerMetric label="Benjamin Required" value={benjaminIssues.length} icon={ShieldAlert} tone={benjaminIssues.length > 0 ? "danger" : "success"} />
-        <TowerMetric label="Locked Repos" value={lockedRepos} icon={GitPullRequest} tone={lockedRepos > 0 ? "warning" : "success"} />
-        <TowerMetric label="Failed Evidence" value={failedEvidence} icon={CircleDot} tone={failedEvidence > 0 ? "danger" : "success"} />
-        <TowerMetric label="Auto-Merge Ready" value={eligibleAutoMergeCandidates} icon={GitMerge} tone={eligibleAutoMergeCandidates > 0 ? "warning" : "success"} />
-      </div>
+      {/* Zone 1 — Delivery Pulse */}
+      <PulseStrip kpis={kpis} />
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
-        <RepoLocksPanel locks={repoLocks} agentsById={agentsById} issuesById={issuesById} />
-        <BenjaminRequiredPanel issues={benjaminIssues} agentsById={agentsById} />
-      </div>
+      {/* Zone 3 — Source health (who feeds what, and since when) */}
+      <SourceHealthRow sources={sourceHealth} />
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <EvidencePanel runs={verificationRuns} />
-        <DeliveryTailPanel issues={issues} runs={verificationRuns} />
-      </div>
+      {/* Zone 2 — Attention queue */}
+      <AttentionQueue items={attention} />
 
-      <div className="grid gap-4">
-        <AutoMergePanel candidates={autoMergeCandidates} />
-      </div>
+      {/* Details — full tables for drill-down */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 pt-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Détails</h2>
+          <div className="h-px flex-1 bg-border" />
+        </div>
 
-      <AgentThroughputPanel rows={agentThroughput} />
+        <div id="repos" className="scroll-mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
+          <RepoLocksPanel locks={repoLocks} agentsById={agentsById} issuesById={issuesById} />
+          <BenjaminRequiredPanel issues={benjaminIssues} agentsById={agentsById} />
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          <EvidencePanel runs={verificationRuns} />
+          <DeliveryTailPanel issues={issues} runs={verificationRuns} />
+        </div>
+
+        <div id="auto-merge" className="scroll-mt-4 grid gap-4">
+          <AutoMergePanel candidates={autoMergeCandidates} />
+        </div>
+
+        <AgentThroughputPanel rows={agentThroughput} />
+      </div>
     </div>
   );
 }
