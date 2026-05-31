@@ -140,9 +140,11 @@ export function IssueRow({
         {recoveryIndicator}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-1 sm:contents">
-        <span className={cn("line-clamp-2 text-sm sm:order-2 sm:min-w-0 sm:flex-1 sm:truncate sm:line-clamp-none", titleClassName)}>
-          {issue.title}{titleSuffix}
-          <IssueTaxonomyChips category={issue.category} surfaces={issue.surfaces} compact className="ml-2 align-middle" />
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm sm:order-2 sm:flex-1 sm:flex-nowrap">
+          <span data-testid="issue-row-title-text" className={cn("min-w-0 line-clamp-2 sm:truncate sm:line-clamp-none", titleClassName)}>
+            {issue.title}{titleSuffix}
+          </span>
+          <IssueTaxonomyChips category={issue.category} surfaces={issue.surfaces} compact className="shrink-0" />
           {deliveryProofIndicator}
         </span>
         {checklistDependencyChips ? (
