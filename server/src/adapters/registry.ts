@@ -112,6 +112,7 @@ import {
 } from "@paperclipai/adapter-openclaw-gateway";
 import { listCodexModels, refreshCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
+import { deepseekPlatformAdapter } from "./deepseek-platform/index.js";
 import {
   execute as piExecute,
   listPiSkills,
@@ -513,6 +514,7 @@ function registerBuiltInAdapters() {
     acpxLocalAdapter,
     claudeLocalAdapter,
     codexLocalAdapter,
+    deepseekPlatformAdapter,
     openCodeLocalAdapter,
     piLocalAdapter,
     cursorCloudAdapter,
