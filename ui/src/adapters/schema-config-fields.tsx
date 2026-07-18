@@ -536,6 +536,9 @@ export function buildSchemaAdapterConfig(
   if (values.adapterSchemaValues) {
     Object.assign(ac, values.adapterSchemaValues);
   }
+  if (values.envBindings && Object.keys(values.envBindings).length > 0) {
+    ac.env = values.envBindings;
+  }
 
   return ac;
 }
